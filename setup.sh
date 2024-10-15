@@ -21,8 +21,7 @@ cpanm -n JSON::MaybeXS JSON::Schema::Modern Path::Tiny
 mkdir -p /app
 cd /app
 
-# use our own fork until bdfoy merges PR#47
-git clone https://github.com/garu/cpan-audit
+git clone https://github.com/briandfoy/cpan-audit
 
 cd cpan-audit
 # Get latest submodules, i.e. cpan-security-advisory

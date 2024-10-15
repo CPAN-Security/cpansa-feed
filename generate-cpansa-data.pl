@@ -40,6 +40,7 @@ sub run {
   my $result = $js->evaluate($schema_id, $feed);
 
   if ($result) {
+    binmode(STDOUT, ":encoding(UTF-8)");
     print $json->encode($feed);
   }
   else {
