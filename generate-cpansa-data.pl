@@ -39,7 +39,7 @@ sub run {
 
   my $result = $js->evaluate($schema_id, $feed);
 
-  if ($result) {
+  if ($result->valid) {
     binmode(STDOUT, ":encoding(UTF-8)");
     print $json->encode($feed);
   }
@@ -142,4 +142,3 @@ sub _report_hotfixes ($report) {
   $report->{affected_versions} = \@sanitized_versions;
   return 1;
 }
-
