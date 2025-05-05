@@ -16,4 +16,4 @@ cpanm -n YAML::Tiny Mojolicious
 # for generate-cpansa-data.pl
 cpanm -n JSON::MaybeXS JSON::Schema::Modern Path::Tiny HTTP::Tiny CPAN::Audit::DB;
 
-git clone --depth 1 --single-branch git@github.com:CVEProject/cvelistV5.git cvelistV5
+git clone --depth 1 --single-branch https://github.com/CVEProject/cvelistV5.git cvelistV5
