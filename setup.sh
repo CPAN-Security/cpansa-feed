@@ -1,7 +1,6 @@
 #!/usr/bin/env sh
 set -ex
 
-
 ## Normally, this is fine
 ##
 # cpm install -g
@@ -15,6 +14,6 @@ cpanm -n --installdeps CPAN::Audit
 cpanm -n YAML::Tiny Mojolicious
 
 # for generate-cpansa-data.pl
-cpanm -n JSON::MaybeXS JSON::Schema::Modern Path::Tiny
+cpanm -n JSON::MaybeXS JSON::Schema::Modern Path::Tiny HTTP::Tiny CPAN::Audit::DB;
 
-cpanm -n CPAN::Audit::DB
+git clone --depth 1 --single-branch git@github.com:CVEProject/cvelistV5.git cvelistV5
