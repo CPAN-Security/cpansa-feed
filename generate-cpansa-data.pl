@@ -23,6 +23,7 @@ sub run {
   my $db = CPAN::Audit::DB->db();
   foreach my $dist (sort keys $db->{dists}->%*) {
     foreach my $report ($db->{dists}{$dist}{advisories}->@*) {
+      last if $report->{darkpan} eq 'true';
 
       # make some weird values compliant with our schema
       _apply_hotfixes($report, $dist) or next;
