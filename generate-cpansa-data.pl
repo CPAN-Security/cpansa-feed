@@ -164,20 +164,8 @@ sub _apply_hotfixes ($report, $dist) {
       return;
   }
 
-  # ensure we have an arrayref and not a single element.
-  if (!ref $report->{affected_versions}) {
-    warn "$report->{id} has scalar affected_versions. Converted to arrayref.";
-    $report->{affected_versions} = [$report->{affected_versions}];
-  }
-
-  # we can't continue unless we know the affected_versions.
-  if (!all {; defined $_ } $report->{affected_versions}->@*) {
-    warn "$report->{id} has undefined values in $report->{affected_versions}. Skipping.";
-    return;
-  }
-
-  # (silently) convert cves and references to arrayref.
-  foreach my $k (qw(cves references)) {
+  # (silently) convert mixed data so they are always arrayrefs.
+  foreach my $k (qw(cves references affected_versions)) {
     if (!ref $report->{$k}) {
       if (!defined $report->{$k} || $report->{$k} eq '') {
         $report->{$k} = [];
@@ -186,6 +174,12 @@ sub _apply_hotfixes ($report, $dist) {
         $report->{$k} = [$report->{$k}];
       }
     }
+  }
+
+  # we can't continue unless we know the affected_versions.
+  if (!all { defined } $report->{affected_versions}->@*) {
+    warn "$report->{id} has undefined values in $report->{affected_versions}. Skipping.";
+    return;
   }
 
   if ($report->{cves}->@* > 1) {
