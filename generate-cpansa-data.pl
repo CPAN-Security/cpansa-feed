@@ -246,8 +246,8 @@ sub _apply_hotfixes ($report, $dist) {
             warn "$report->{id} has invalid range in '$version'\n";
           }
         }
-        push @sanitized_versions, join(',', @sanitized_ands);
       }
+      push @sanitized_versions, join(',', @sanitized_ands);
   }
   $report->{affected_versions} = \@sanitized_versions;
   return 1;
