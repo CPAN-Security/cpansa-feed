@@ -18,7 +18,6 @@ sub run {
   my $cve_path = path('cvelistV5', 'cves');
   die 'unable to find base cve dir. Did you forget to setup?' if !$cve_path->is_dir;
 
-  my $index = 0;
   my $feed = {};
   my $db = CPAN::Audit::DB->db();
   foreach my $dist (sort keys $db->{dists}->%*) {
@@ -31,7 +30,6 @@ sub run {
 
       push $feed->{$dist}->@*, {
         distribution      => $dist,
-        cpansec_index     => sha1_hex('CPANSec', $index++, $dist),
         version_range     => $report->{affected_versions},
         affected_releases => _get_versions_from_range($dist, $report->{affected_versions}),
         cve_id            => $report->{cve_id},
