@@ -73,7 +73,7 @@ sub _find_cve ($cve_path, $cve_id) {
         }
     }
     die "unable to find $cve_id in $complete_path." unless $complete_path;
-    return encode_json(decode_json($complete_path->slurp_raw));
+    return decode_json($complete_path->slurp_raw);
 }
 
 sub _get_versions_from_range ($distname, $version_range) {
