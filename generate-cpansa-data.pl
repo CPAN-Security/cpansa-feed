@@ -29,6 +29,15 @@ sub run {
       my $cve = _find_cve($cve_path, $report->{cve_id});
 
       push $feed->{$dist}->@*, {
+        # legacy (purely for Test::CVE support)
+        cpansa_id         => $report->{id},
+        affected_versions => $report->{affected_versions},
+        cves              => $report->{cves},
+        description       => $report->{description},
+        reported          => $report->{reported},
+        severity          => $report->{severity},
+
+        # new
         distribution      => $dist,
         version_range     => $report->{affected_versions},
         affected_releases => _get_versions_from_range($dist, $report->{affected_versions}),
