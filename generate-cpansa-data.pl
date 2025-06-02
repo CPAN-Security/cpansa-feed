@@ -34,7 +34,7 @@ sub run {
         affected_releases => _get_versions_from_range($dist, $report->{affected_versions}),
         cve_id            => $report->{cve_id},
         cve               => $cve,
-        title             => $report->{description},
+        title             => _fetch_title($cve) // $report->{description},
         references        => $report->{references},
       };
     }
@@ -55,6 +55,11 @@ sub run {
   else {
     die $json->encode($result);
   }
+}
+
+sub _fetch_title ($cve) {
+    return unless $cve && ref $cve;
+    return $cve->{containers}{cna}{title};
 }
 
 sub _find_cve ($cve_path, $cve_id) {
