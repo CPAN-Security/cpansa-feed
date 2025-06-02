@@ -53,7 +53,7 @@ sub run {
     print $json->encode($feed);
   }
   else {
-    die $json->encode($result);
+    die $json->encode($result) . "\n[^] output does not conform to schema";
   }
 }
 
