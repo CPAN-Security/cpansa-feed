@@ -241,7 +241,8 @@ sub _apply_hotfixes ($report, $dist) {
     die "$report->{id} has no acceptable version in $version." if @sanitized_ands == 0;
     if (@sanitized_ands > 1) {
         if (any { $_ =~ /\A=/ } @sanitized_ands) {
-          die "$report->{id} has '=' bundled with other clauses in '$version'";
+          warn "$report->{id} has '=' bundled with other clauses in '$version'. Skipping.";
+          return;
         }
         else {
           my ($gt_count, $lt_count, $lower_end, $higher_end) = (0, 0, undef, undef);
