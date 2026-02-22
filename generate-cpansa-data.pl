@@ -73,6 +73,7 @@ sub _fetch_title ($cve) {
 
 sub _find_cve ($cve_path, $cve_id) {
     return unless $cve_id;
+    return unless $cve_id =~ /\ACVE-/;
     my (undef, $year, $n) = split '-', $cve_id;
     my $n_len = length($n);
     my $complete_path;
@@ -86,7 +87,10 @@ sub _find_cve ($cve_path, $cve_id) {
             $complete_path = undef;
         }
     }
-    die "unable to find $cve_id in $complete_path." unless $complete_path;
+    unless ($complete_path) {
+        warn "unable to find $cve_id in cvelistV5. Skipping CVE data.";
+        return;
+    }
     return decode_json($complete_path->slurp_raw);
 }
 
