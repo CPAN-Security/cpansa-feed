@@ -29,6 +29,10 @@ sub run {
       # make some weird values compliant with our schema
       _apply_hotfixes($report, $dist) or next;
       my $cve = _find_cve($cve_path, $report->{cve_id});
+      if (defined $report->{cve_id} && !defined $cve) {
+        warn "$report->{id} unable to resolve CVE payload for '$report->{cve_id}'. Skipping.";
+        next;
+      }
 
       push $feed->{$dist}->@*, {
         # legacy (purely for Test::CVE support)
@@ -75,7 +79,11 @@ sub _fetch_title ($cve) {
 
 sub _find_cve ($cve_path, $cve_id) {
     return unless $cve_id;
-    my (undef, $year, $n) = split '-', $cve_id;
+    if ($cve_id !~ /\ACVE-(\d{4})-(\d+)\z/) {
+        warn "non-CVE identifier '$cve_id'";
+        return;
+    }
+    my ($year, $n) = ($1, $2);
     my $n_len = length($n);
     my $complete_path;
     while ($n_len > 0) {
@@ -88,7 +96,10 @@ sub _find_cve ($cve_path, $cve_id) {
             $complete_path = undef;
         }
     }
-    die "unable to find $cve_id in $complete_path." unless $complete_path;
+    unless ($complete_path) {
+        warn "unable to find $cve_id in cvelistV5";
+        return;
+    }
     return decode_json($complete_path->slurp_raw);
 }
 
@@ -173,6 +184,12 @@ sub split_version_range ($dist, $version_range) {
     return { greater => \@greater, lower => \@lower, equal => \@equal, not_equal => \@not_equal };
 }
 
+sub _skip_report ($report, $reason) {
+  my $id = $report->{id} // '<unknown>';
+  warn "$id $reason. Skipping.";
+  return;
+}
+
 # return true if all is well, false if report should be skipped.
 sub _apply_hotfixes ($report, $dist) {
   return unless defined $report->{affected_versions};
@@ -237,14 +254,21 @@ sub _apply_hotfixes ($report, $dist) {
           next;
         }
         else {
-          die "fatal: affected_versions must only begin with '>', '<', '<=', '>=', or '='. Found '$and' in '$version'";
+          return _skip_report(
+            $report,
+            "has unparseable affected_versions clause '$and' in '$version'"
+          );
         }
       }
     }
-    die "$report->{id} has no acceptable version in $version." if @sanitized_ands == 0;
+    return _skip_report($report, "has no acceptable version in '$version'")
+      if @sanitized_ands == 0;
     if (@sanitized_ands > 1) {
         if (any { $_ =~ /\A=/ } @sanitized_ands) {
-          die "$report->{id} has '=' bundled with other clauses in '$version'";
+          return _skip_report(
+            $report,
+            "has ambiguous affected_versions '$version' ('=' bundled with range clauses)"
+          );
         }
         else {
           my ($gt_count, $lt_count, $lower_end, $higher_end) = (0, 0, undef, undef);
