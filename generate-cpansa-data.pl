@@ -11,6 +11,8 @@ use Digest::SHA qw(sha1_hex);
 use HTTP::Tiny;
 use Try::Tiny;
 
+my %METACPAN_RELEASES_BY_DIST;
+
 run();
 exit;
 
@@ -92,24 +94,29 @@ sub _find_cve ($cve_path, $cve_id) {
 
 sub _get_versions_from_range ($distname, $version_range) {
     my $ranges = split_version_range ($distname,$version_range);
-    my $response = decode_json(
-        HTTP::Tiny->new->post('https://fastapi.metacpan.org/release?size=5000', {
-            content => encode_json({
-                query  => { term => { distribution => $distname } },
-                fields => ['version', 'version_numified', 'author']
-            })
-        })->{content}
-    );
-    my @all_versions;
-    foreach my $entry ($response->{hits}{hits}->@*) {
-        push @all_versions, {
-            release => $entry->{fields}{author} . '/' . $distname . '-' . $entry->{fields}{version},
-            version => version->parse($entry->{fields}{version_numified})
-        };
+    my $all_versions = $METACPAN_RELEASES_BY_DIST{$distname};
+    if (!$all_versions) {
+        my $response = decode_json(
+            HTTP::Tiny->new->post('https://fastapi.metacpan.org/release?size=5000', {
+                content => encode_json({
+                    query  => { term => { distribution => $distname } },
+                    fields => ['version', 'version_numified', 'author']
+                })
+            })->{content}
+        );
+        my @fetched_versions;
+        foreach my $entry ($response->{hits}{hits}->@*) {
+            push @fetched_versions, {
+                release => $entry->{fields}{author} . '/' . $distname . '-' . $entry->{fields}{version},
+                version => version->parse($entry->{fields}{version_numified})
+            };
+        }
+        $all_versions = \@fetched_versions;
+        $METACPAN_RELEASES_BY_DIST{$distname} = $all_versions;
     }
 
     my @releases_in_range;
-    foreach my $version (@all_versions) {
+    foreach my $version ($all_versions->@*) {
         push @releases_in_range, $version->{release} if version_in_range($version->{version}, $ranges);
     }
     return [sort @releases_in_range];
