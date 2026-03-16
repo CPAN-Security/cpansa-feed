@@ -3,15 +3,18 @@ use warnings;
 use version;
 
 use JSON::Schema::Modern;
-use JSON::MaybeXS;
+use JSON::MaybeXS qw(decode_json encode_json);
+use Mojo::Util qw(xml_escape);
 use Path::Tiny;
 use CPAN::Audit::DB;
-use List::Util qw( any all );
-use Digest::SHA qw(sha1_hex);
+use List::Util qw(any all);
 use HTTP::Tiny;
-use Try::Tiny;
+use CPANSA::Feed::VersionRange qw(releases_in_range split_version_range version_in_range);
 
 my %METACPAN_RELEASES_BY_DIST;
+my %CPANSEC_SKIP_NOTES;
+my $LAST_VERSION_RESOLUTION_ERROR;
+my %WARNED_MESSAGES;
 
 run();
 exit;
@@ -20,187 +23,640 @@ sub run {
   my $cve_path = path('cvelistV5', 'cves');
   die 'unable to find base cve dir. Did you forget to setup?' if !$cve_path->is_dir;
 
-  my $feed = {};
   my $db = CPAN::Audit::DB->db();
-  foreach my $dist (sort keys $db->{dists}->%*) {
-    foreach my $report ($db->{dists}{$dist}{advisories}->@*) {
-      last if $report->{darkpan} && $report->{darkpan} eq 'true';
+  my ($feed, $report_rows) = _build_feed($db, $cve_path);
 
-      # make some weird values compliant with our schema
-      _apply_hotfixes($report, $dist) or next;
-      my $cve = _find_cve($cve_path, $report->{cve_id});
-      if (defined $report->{cve_id} && !defined $cve) {
-        warn "$report->{id} unable to resolve CVE payload for '$report->{cve_id}'. Skipping.";
-        next;
-      }
-
-      push $feed->{$dist}->@*, {
-        # legacy (purely for Test::CVE support)
-        cpansa_id         => $report->{id},
-        affected_versions => $report->{affected_versions},
-        cves              => $report->{cves},
-        description       => $report->{description},
-        reported          => $report->{reported},
-        severity          => $report->{severity},
-
-        # new
-        distribution      => $dist,
-        version_range     => $report->{affected_versions},
-        affected_releases => _get_versions_from_range($dist, $report->{affected_versions}),
-        cve_id            => $report->{cve_id},
-        cve               => $cve,
-        title             => _fetch_title($cve) // $report->{description},
-        references        => $report->{references},
-      };
-    }
-  }
+  _write_html_report($ENV{CPANSA_REPORT_HTML}, $report_rows) if $ENV{CPANSA_REPORT_HTML};
 
   my $json = JSON::MaybeXS->new(canonical => 1);
   my $js = JSON::Schema::Modern->new(validate_formats => 1);
-  my $schema = $json->decode(path("schema.json")->slurp_raw);
+  my $schema = $json->decode(path('schema.json')->slurp_raw);
   my $schema_id = $schema->{'$id'};
   $js->add_schema($schema);
 
   my $result = $js->evaluate($schema_id, $feed);
-
   if ($result->valid) {
-    binmode(STDOUT, ":encoding(UTF-8)");
+    binmode(STDOUT, ':encoding(UTF-8)');
     print $json->encode($feed);
+    return;
   }
-  else {
-    die $json->encode($result) . "\n[^] output does not conform to schema";
+
+  die $json->encode($result) . "\n[^] output does not conform to schema";
+}
+
+sub _build_feed ($db, $cve_path) {
+  my ($cpansa_by_cve, $cpansa_by_dist) = _index_cpansa($db);
+  my (%feed, %used_cpansa_ids, %covered_cpansec_cves);
+  my @report_rows;
+
+  foreach my $cve (_load_cpansec_cves($cve_path)) {
+    my $cve_id = $cve->{cveMetadata}{cveId};
+    my $cna = $cve->{containers}{cna} // {};
+    my @affected = ref($cna->{affected}) eq 'ARRAY' ? $cna->{affected}->@* : ();
+
+    if (!@affected) {
+      push @report_rows, {
+        status => 'skipped',
+        determination => 'cpansec missing affected data',
+        source => 'cvelistV5',
+        cna => _cna_short_name($cve),
+        distribution => '',
+        cve_id => $cve_id,
+        cpansa_id => '',
+        enriched_fields => '',
+        title => _fetch_title($cve) // '',
+        note => 'CVE has no affected packages',
+      };
+      next;
+    }
+
+    foreach my $affected (@affected) {
+      my $dist = _distribution_from_affected($affected);
+      if (!$dist) {
+        push @report_rows, {
+          status => 'skipped',
+          determination => 'cpansec missing package name',
+          source => 'cvelistV5',
+          cna => _cna_short_name($cve),
+          distribution => '',
+          cve_id => $cve_id,
+          cpansa_id => '',
+          enriched_fields => '',
+          title => _fetch_title($cve) // '',
+          note => 'Affected entry has no packageName/product',
+        };
+        next;
+      }
+
+      my $cpansa_match = _find_cpansa_match($cpansa_by_cve->{$cve_id}, $dist);
+      my $cpansa_enrichment;
+      my @notes = ('CPANSec authoritative');
+      my %enriched_from_cpansa;
+
+      if ($cpansa_match && _apply_hotfixes($cpansa_match, $cpansa_match->{distribution})) {
+        $cpansa_enrichment = $cpansa_match;
+        $enriched_from_cpansa{$_} = 1 for _cpansa_enrichment_fields($cve, $cpansa_enrichment);
+      }
+      elsif ($cpansa_match) {
+        push @notes, 'ignored invalid CPANSA enrichment';
+      }
+
+      my $affected_versions = _affected_versions_from_cve($dist, $affected);
+      if ((!$affected_versions || !$affected_versions->@*) && $cpansa_enrichment) {
+        $affected_versions = $cpansa_enrichment->{affected_versions};
+        push @notes, 'filled affected_versions from CPANSA';
+        $enriched_from_cpansa{affected_versions} = 1;
+      }
+
+      if (!$affected_versions || !$affected_versions->@*) {
+        my $note = 'No usable affected versions in CVE or CPANSA';
+        $CPANSEC_SKIP_NOTES{$cve_id}{$dist} = $note;
+        push @report_rows, {
+          status => 'skipped',
+          determination => 'cpansec missing usable versions',
+          source => 'cvelistV5',
+          cna => _cna_short_name($cve),
+          distribution => $dist,
+          cve_id => $cve_id,
+          cpansa_id => $cpansa_match ? $cpansa_match->{id} : '',
+          enriched_fields => '',
+          title => _fetch_title($cve) // '',
+          note => $note,
+        };
+        next;
+      }
+
+      my $affected_releases = _safe_get_versions_from_range($dist, $affected_versions);
+      if (!defined $affected_releases) {
+        my $note = 'Failed to resolve version range against MetaCPAN releases';
+        $note .= ": $LAST_VERSION_RESOLUTION_ERROR" if defined $LAST_VERSION_RESOLUTION_ERROR;
+        $CPANSEC_SKIP_NOTES{$cve_id}{$dist} = $note;
+        push @report_rows, {
+          status => 'skipped',
+          determination => 'unresolvable affected releases',
+          source => 'cvelistV5',
+          cna => _cna_short_name($cve),
+          distribution => $dist,
+          cve_id => $cve_id,
+          cpansa_id => $cpansa_enrichment ? $cpansa_enrichment->{id} : '',
+          enriched_fields => join(', ', sort keys %enriched_from_cpansa),
+          title => _fetch_title($cve) // '',
+          note => $note,
+        };
+        next;
+      }
+
+      my $record = _compact_record({
+        cpansa_id => $cpansa_enrichment ? $cpansa_enrichment->{id} : undef,
+        affected_versions => $affected_versions,
+        cves => _merge_lists([$cve_id], $cpansa_enrichment ? $cpansa_enrichment->{cves} : []),
+        description => _cve_description($cve) // ($cpansa_enrichment ? $cpansa_enrichment->{description} : undef),
+        reported => _reported_from_cve($cve) // ($cpansa_enrichment ? $cpansa_enrichment->{reported} : undef),
+        severity => _severity_from_cve($cve) // ($cpansa_enrichment ? $cpansa_enrichment->{severity} : undef),
+        distribution => $dist,
+        version_range => $affected_versions,
+        affected_releases => $affected_releases,
+        cve_id => $cve_id,
+        cve => $cve,
+        title => _fetch_title($cve) // _cve_description($cve) // ($cpansa_enrichment ? $cpansa_enrichment->{description} : undef),
+        references => _merge_lists(_cve_references($cve), $cpansa_enrichment ? $cpansa_enrichment->{references} : []),
+      });
+
+      push $feed{$dist}->@*, $record;
+      $covered_cpansec_cves{$cve_id} = 1;
+      $used_cpansa_ids{$cpansa_enrichment->{id}} = 1 if $cpansa_enrichment;
+
+      push @report_rows, {
+        status => 'included',
+        determination => $cpansa_enrichment ? 'cpansec authoritative + cpansa enrichment' : 'cpansec authoritative',
+        source => 'cvelistV5',
+        cna => _cna_short_name($cve),
+        distribution => $dist,
+        cve_id => $cve_id,
+        cpansa_id => $cpansa_enrichment ? $cpansa_enrichment->{id} : '',
+        enriched_fields => join(', ', sort keys %enriched_from_cpansa),
+        title => $record->{title} // '',
+        note => join('; ', @notes),
+      };
+    }
   }
+
+  foreach my $dist (sort keys $cpansa_by_dist->%*) {
+    foreach my $report ($cpansa_by_dist->{$dist}->@*) {
+      if ($report->{darkpan} && $report->{darkpan} eq 'true') {
+        push @report_rows, {
+          status => 'skipped',
+          determination => 'darkpan advisory',
+          source => 'CPANSA',
+          cna => '',
+          distribution => $dist,
+          cve_id => '',
+          cpansa_id => $report->{id} // '',
+          enriched_fields => '',
+          title => '',
+          note => 'DarkPAN advisories are excluded',
+        };
+        next;
+      }
+
+      if ($used_cpansa_ids{$report->{id}}) {
+        push @report_rows, {
+          status => 'skipped',
+          determination => 'covered by cpansec authoritative record',
+          source => 'CPANSA',
+          cna => '',
+          distribution => $dist,
+          cve_id => '',
+          cpansa_id => $report->{id} // '',
+          enriched_fields => '',
+          title => '',
+          note => 'CPANSA advisory already merged into a CPANSec CVE record',
+        };
+        next;
+      }
+
+      delete $report->{_skip_reason};
+      if (!_apply_hotfixes($report, $dist)) {
+        push @report_rows, {
+          status => 'skipped',
+          determination => 'invalid cpansa advisory',
+          source => 'CPANSA',
+          cna => '',
+          distribution => $dist,
+          cve_id => '',
+          cpansa_id => $report->{id} // '',
+          enriched_fields => '',
+          title => '',
+          note => $report->{_skip_reason} // 'Sanitization failed',
+        };
+        next;
+      }
+
+      my $cve = _find_cve($cve_path, $report->{cve_id});
+      my $is_cpansec = _is_cpansec_cve($cve);
+      if (defined $report->{cve_id} && !defined $cve) {
+        my $note = 'Referenced CVE could not be resolved from cvelistV5';
+        push @report_rows, {
+          status => 'skipped',
+          determination => 'unresolvable cve payload',
+          source => 'CPANSA',
+          cna => '',
+          distribution => $dist,
+          cve_id => $report->{cve_id} // '',
+          cpansa_id => $report->{id} // '',
+          enriched_fields => '',
+          title => '',
+          note => $note,
+        };
+        $CPANSEC_SKIP_NOTES{$report->{cve_id}}{$dist} = $note if $report->{cve_id};
+        warn "$report->{id} unable to resolve CVE payload for '$report->{cve_id}'. Skipping.";
+        next;
+      }
+
+      if ($is_cpansec && $covered_cpansec_cves{$report->{cve_id}}) {
+        push @report_rows, {
+          status => 'skipped',
+          determination => 'covered by cpansec authoritative record',
+          source => 'CPANSA',
+          cna => _cna_short_name($cve),
+          distribution => $dist,
+          cve_id => $report->{cve_id} // '',
+          cpansa_id => $report->{id} // '',
+          enriched_fields => '',
+          title => '',
+          note => 'Duplicate advisory for a CVE already emitted from cvelistV5',
+        };
+        next;
+      }
+
+      my $affected_releases = _safe_get_versions_from_range($dist, $report->{affected_versions});
+      if (!defined $affected_releases) {
+        push @report_rows, {
+          status => 'skipped',
+          determination => 'unresolvable affected releases',
+          source => 'CPANSA',
+          cna => _cna_short_name($cve),
+          distribution => $dist,
+          cve_id => $report->{cve_id} // '',
+          cpansa_id => $report->{id} // '',
+          enriched_fields => '',
+          title => '',
+          note => 'Failed to resolve version range against MetaCPAN releases',
+        };
+        next;
+      }
+
+      my $record = _compact_record({
+        cpansa_id => $report->{id},
+        affected_versions => $report->{affected_versions},
+        cves => $report->{cves},
+        description => $report->{description},
+        reported => $report->{reported},
+        severity => $report->{severity},
+        distribution => $dist,
+        version_range => $report->{affected_versions},
+        affected_releases => $affected_releases,
+        cve_id => $report->{cve_id},
+        cve => $cve,
+        title => _fetch_title($cve) // $report->{description},
+        references => $report->{references},
+      });
+
+      push $feed{$dist}->@*, $record;
+      push @report_rows, {
+        status => 'included',
+        determination => $is_cpansec ? 'cpansa fallback for cpansec cve' : 'cpansa external cna',
+        source => 'CPANSA',
+        cna => _cna_short_name($cve),
+        distribution => $dist,
+        cve_id => $report->{cve_id} // '',
+        cpansa_id => $report->{id} // '',
+        enriched_fields => '',
+        title => $record->{title} // '',
+        note => $is_cpansec
+          ? 'CPANSec CVE was not emitted from cvelistV5; fallback reason: '
+            . ($CPANSEC_SKIP_NOTES{$report->{cve_id}}{$dist}
+              // $CPANSEC_SKIP_NOTES{$report->{cve_id}}{''}
+              // 'unknown')
+          : 'Historical advisory sourced from CPANSA',
+      };
+    }
+  }
+
+  return (\%feed, \@report_rows);
+}
+
+sub _index_cpansa ($db) {
+  my (%by_cve, %by_dist);
+
+  foreach my $dist (sort keys $db->{dists}->%*) {
+    my @advisories = $db->{dists}{$dist}{advisories}->@*;
+    $by_dist{$dist} = \@advisories;
+
+    foreach my $report (@advisories) {
+      foreach my $cve_id (_normalize_list($report->{cves})->@*) {
+        push $by_cve{$cve_id}->@*, $report;
+      }
+    }
+  }
+
+  return (\%by_cve, \%by_dist);
+}
+
+sub _load_cpansec_cves ($cve_path) {
+  my @records;
+
+  $cve_path->visit(
+    sub ($path, $state) {
+      return if !$path->is_file;
+      return if $path !~ /\.json\z/;
+
+      my $cve = eval { decode_json($path->slurp_raw) };
+      if ($@) {
+        warn "unable to parse $path: $@";
+        return;
+      }
+      return if !_is_cpansec_cve($cve);
+
+      push @records, $cve;
+    },
+    { recurse => 1 },
+  );
+
+  return sort {
+    ($a->{cveMetadata}{cveId} // '') cmp ($b->{cveMetadata}{cveId} // '')
+  } @records;
+}
+
+sub _is_cpansec_cve ($cve) {
+  return 0 if !$cve || ref($cve) ne 'HASH';
+  return 1 if ($cve->{cveMetadata}{assignerShortName} // '') eq 'CPANSec';
+  return 1 if ($cve->{containers}{cna}{providerMetadata}{shortName} // '') eq 'CPANSec';
+  return 0;
+}
+
+sub _distribution_from_affected ($affected) {
+  return if !$affected || ref($affected) ne 'HASH';
+  return $affected->{packageName} if defined $affected->{packageName} && $affected->{packageName} ne '';
+  return $affected->{product} if defined $affected->{product} && $affected->{product} ne '';
+  return;
+}
+
+sub _affected_versions_from_cve ($dist, $affected) {
+  return [] if !$affected || ref($affected) ne 'HASH';
+  return [] if ref($affected->{versions}) ne 'ARRAY';
+
+  my @ranges;
+  foreach my $version_spec ($affected->{versions}->@*) {
+    next if ref($version_spec) ne 'HASH';
+    next if defined $version_spec->{status} && $version_spec->{status} ne 'affected';
+
+    my @parts;
+    my $start = $version_spec->{version};
+    my $less_than = _normalize_cve_version_bound($dist, $version_spec->{versionType}, $version_spec->{lessThan});
+    my $less_than_or_equal = _normalize_cve_version_bound($dist, $version_spec->{versionType}, $version_spec->{lessThanOrEqual});
+    my $changes_at = _normalize_cve_version_bound($dist, $version_spec->{versionType}, $version_spec->{changesAt});
+    if (defined $version_spec->{lessThan}) {
+      push @parts, ">=$start" if defined $start && $start ne '' && $start ne '0';
+      push @parts, "<$less_than" if !_is_open_ended_bound($less_than);
+    }
+    elsif (defined $version_spec->{lessThanOrEqual}) {
+      push @parts, ">=$start" if defined $start && $start ne '' && $start ne '0';
+      push @parts, "<=$less_than_or_equal" if !_is_open_ended_bound($less_than_or_equal);
+    }
+    elsif (defined $version_spec->{changesAt}) {
+      push @parts, ">=$start" if defined $start && $start ne '' && $start ne '0';
+      push @parts, "<$changes_at";
+    }
+    elsif (defined $start && $start ne '') {
+      push @parts, "=$start";
+    }
+
+    push @ranges, join(',', @parts) if @parts;
+  }
+
+  return \@ranges;
+}
+
+sub _is_open_ended_bound ($value) {
+  return 0 if !defined $value;
+  return $value eq '*';
+}
+
+sub _normalize_cve_version_bound ($dist, $version_type, $value) {
+  return $value if !defined $value || $value eq '';
+
+  # Perl CVEs in cvelistV5 use versionType=custom with RC boundaries like
+  # 5.40.2-RC1 to denote "fixed before the release candidate". Our feed only
+  # resolves published CPAN releases, so comparing against the final dotted
+  # release boundary is the correct approximation for emitted releases.
+  if (($dist // '') eq 'perl' && ($version_type // '') eq 'custom' && $value =~ /\A(\d+(?:\.\d+)*)-RC\d+\z/) {
+    return $1;
+  }
+
+  return $value;
+}
+
+sub _find_cpansa_match ($reports, $dist) {
+  return if ref($reports) ne 'ARRAY' || !$reports->@*;
+  my ($exact) = grep { ($_->{distribution} // '') eq $dist } $reports->@*;
+  return $exact // $reports->[0];
+}
+
+sub _cpansa_enrichment_fields ($cve, $cpansa) {
+  return if !$cpansa;
+
+  my @fields;
+
+  push @fields, 'cpansa_id' if defined $cpansa->{id} && $cpansa->{id} ne '';
+
+  if (_normalize_list($cpansa->{references})->@*) {
+    my %cve_refs = map { $_ => 1 } _cve_references($cve)->@*;
+    push @fields, 'references'
+      if any { !$cve_refs{$_} } _normalize_list($cpansa->{references})->@*;
+  }
+
+  if (_normalize_list($cpansa->{cves})->@* > 1) {
+    push @fields, 'related_cves';
+  }
+
+  if ((!defined _reported_from_cve($cve) || _reported_from_cve($cve) eq '') && defined $cpansa->{reported} && $cpansa->{reported} ne '') {
+    push @fields, 'reported';
+  }
+
+  if ((!defined _severity_from_cve($cve) || _severity_from_cve($cve) eq '') && defined $cpansa->{severity} && $cpansa->{severity} ne '') {
+    push @fields, 'severity';
+  }
+
+  if ((!defined _cve_description($cve) || _cve_description($cve) eq '') && defined $cpansa->{description} && $cpansa->{description} ne '') {
+    push @fields, 'description';
+  }
+
+  return @fields;
+}
+
+sub _reported_from_cve ($cve) {
+  return _date_only($cve->{cveMetadata}{datePublished})
+    // _date_only($cve->{cveMetadata}{dateReserved})
+    // _date_only($cve->{cveMetadata}{dateUpdated});
+}
+
+sub _cna_short_name ($cve) {
+  return '' if !$cve || ref($cve) ne 'HASH';
+  return $cve->{cveMetadata}{assignerShortName}
+    // $cve->{containers}{cna}{providerMetadata}{shortName}
+    // '';
+}
+
+sub _cve_description ($cve) {
+  my $descriptions = $cve->{containers}{cna}{descriptions};
+  return if ref($descriptions) ne 'ARRAY';
+
+  foreach my $description ($descriptions->@*) {
+    next if ref($description) ne 'HASH';
+    return $description->{value} if ($description->{lang} // '') eq 'en' && defined $description->{value};
+  }
+
+  foreach my $description ($descriptions->@*) {
+    next if ref($description) ne 'HASH';
+    return $description->{value} if defined $description->{value};
+  }
+
+  return;
+}
+
+sub _severity_from_cve ($cve) {
+  my $adp = $cve->{containers}{adp};
+  return if ref($adp) ne 'ARRAY';
+
+  foreach my $container ($adp->@*) {
+    next if ref($container) ne 'HASH';
+    next if ref($container->{metrics}) ne 'ARRAY';
+    foreach my $metric ($container->{metrics}->@*) {
+      next if ref($metric) ne 'HASH';
+      my $severity = lc($metric->{cvssV3_1}{baseSeverity} // '');
+      return $severity if $severity =~ /\A(?:minor|medium|moderate|high|critical)\z/;
+    }
+  }
+
+  return;
+}
+
+sub _cve_references ($cve) {
+  my $references = $cve->{containers}{cna}{references};
+  return [] if ref($references) ne 'ARRAY';
+
+  my @urls;
+  foreach my $reference ($references->@*) {
+    next if ref($reference) ne 'HASH';
+    push @urls, $reference->{url} if defined $reference->{url} && $reference->{url} ne '';
+  }
+
+  return _merge_lists(\@urls, []);
+}
+
+sub _compact_record ($record) {
+  my %copy = $record->%*;
+  foreach my $key (keys %copy) {
+    delete $copy{$key} if !defined $copy{$key};
+  }
+  return \%copy;
+}
+
+sub _normalize_list ($value) {
+  return [] if !defined $value || $value eq '';
+  return [ grep { defined && $_ ne '' } $value->@* ] if ref($value) eq 'ARRAY';
+  return [$value];
+}
+
+sub _merge_lists ($left, $right) {
+  my %seen;
+  my @merged;
+
+  foreach my $value (_normalize_list($left)->@*, _normalize_list($right)->@*) {
+    next if $seen{$value}++;
+    push @merged, $value;
+  }
+
+  return \@merged;
+}
+
+sub _date_only ($value) {
+  return if !defined $value || $value eq '';
+  return $1 if $value =~ /\A(\d{4}-\d{2}-\d{2})/;
+  return;
 }
 
 sub _fetch_title ($cve) {
-    return unless $cve && ref $cve;
-    return $cve->{containers}{cna}{title};
+  return unless $cve && ref $cve;
+  return $cve->{containers}{cna}{title};
 }
 
 sub _find_cve ($cve_path, $cve_id) {
-    return unless $cve_id;
-    if ($cve_id !~ /\ACVE-(\d{4})-(\d+)\z/) {
-        warn "non-CVE identifier '$cve_id'";
-        return;
-    }
-    my ($year, $n) = ($1, $2);
-    my $n_len = length($n);
-    my $complete_path;
-    while ($n_len > 0) {
-        my $dir = substr($n, 0, $n_len) . ('x' x (length($n) - $n_len)); $n_len--;
-        $complete_path = $cve_path->child($year, $dir, $cve_id . '.json');
-        if ($complete_path->is_file) {
-            last;
-        }
-        else {
-            $complete_path = undef;
-        }
-    }
-    unless ($complete_path) {
-        warn "unable to find $cve_id in cvelistV5";
-        return;
-    }
-    return decode_json($complete_path->slurp_raw);
+  return unless $cve_id;
+  if ($cve_id !~ /\ACVE-(\d{4})-(\d+)\z/) {
+    warn "non-CVE identifier '$cve_id'";
+    return;
+  }
+
+  my ($year, $n) = ($1, $2);
+  my $n_len = length($n);
+  my $complete_path;
+  while ($n_len > 0) {
+    my $dir = substr($n, 0, $n_len) . ('x' x (length($n) - $n_len));
+    $n_len--;
+    $complete_path = $cve_path->child($year, $dir, $cve_id . '.json');
+    last if $complete_path->is_file;
+    $complete_path = undef;
+  }
+
+  unless ($complete_path) {
+    warn "unable to find $cve_id in cvelistV5";
+    return;
+  }
+
+  return decode_json($complete_path->slurp_raw);
+}
+
+sub _safe_get_versions_from_range ($distname, $version_range) {
+  $LAST_VERSION_RESOLUTION_ERROR = undef;
+  my $result = eval { _get_versions_from_range($distname, $version_range) };
+  if ($@) {
+    chomp(my $error = $@);
+    $LAST_VERSION_RESOLUTION_ERROR = $error;
+    warn "unable to resolve affected releases for $distname: $error\n";
+    return;
+  }
+  return $result;
 }
 
 sub _get_versions_from_range ($distname, $version_range) {
-    my $ranges = split_version_range ($distname,$version_range);
-    my $all_versions = $METACPAN_RELEASES_BY_DIST{$distname};
-    if (!$all_versions) {
-        my $response = decode_json(
-            HTTP::Tiny->new->post('https://fastapi.metacpan.org/release?size=5000', {
-                content => encode_json({
-                    query  => { term => { distribution => $distname } },
-                    fields => ['version', 'version_numified', 'author']
-                })
-            })->{content}
-        );
-        my @fetched_versions;
-        foreach my $entry ($response->{hits}{hits}->@*) {
-            push @fetched_versions, {
-                release => $entry->{fields}{author} . '/' . $distname . '-' . $entry->{fields}{version},
-                version => version->parse($entry->{fields}{version_numified})
-            };
-        }
-        $all_versions = \@fetched_versions;
-        $METACPAN_RELEASES_BY_DIST{$distname} = $all_versions;
-    }
+  my $clauses = split_version_range($distname, $version_range);
+  my $all_versions = $METACPAN_RELEASES_BY_DIST{$distname};
+  if (!$all_versions) {
+    my $response = decode_json(
+      HTTP::Tiny->new->post('https://fastapi.metacpan.org/release?size=5000', {
+        content => encode_json({
+          query  => { term => { distribution => $distname } },
+          fields => ['version', 'version_numified', 'author'],
+        }),
+      })->{content}
+    );
 
-    my @releases_in_range;
-    foreach my $version ($all_versions->@*) {
-        push @releases_in_range, $version->{release} if version_in_range($version->{version}, $ranges);
+    my @fetched_versions;
+    foreach my $entry ($response->{hits}{hits}->@*) {
+      push @fetched_versions, {
+        release => $entry->{fields}{author} . '/' . $distname . '-' . $entry->{fields}{version},
+        version => version->parse($entry->{fields}{version_numified}),
+      };
     }
-    return [sort @releases_in_range];
-}
+    $all_versions = \@fetched_versions;
+    $METACPAN_RELEASES_BY_DIST{$distname} = $all_versions;
+  }
 
-sub version_in_range ($version, $range) {
-    return 1 if List::Util::any { $version == $_ } $range->{equal}->@*;
-    return 1 if List::Util::any { $version == $_ } $range->{not_equal}->@*;
-    my @greater = sort $range->{greater}->@*;
-    my @lower   = sort $range->{lower}->@*;
-    return 1 if @greater && (!@lower || $greater[-1] > $lower[-1]) && $version > $greater[-1];
-    return 1 if @lower && (!@greater || ($lower[0] < $greater[0])) && $version < $lower[0];
-    return 1 if (( List::Util::any { $version >  $_ } $range->{greater}->@*)
-                    && (List::Util::any { $version <  $_ } $range->{lower}->@*));
-    return 0;
-}
-
-sub split_version_range ($dist, $version_range) {
-    my (@greater, @lower, @equal, @not_equal);
-    foreach my $entry ($version_range->@*) {
-        foreach my $expr (split /\s*,\s*/, $entry) {
-            if ($expr =~ /\A\s*([>=<!]=?)?\s*([0-9]\S*)\s*\z/) {
-                my ($op, $ver) = ($1, $2);
-                $ver = version->parse($ver);
-                if ($op eq '>') {
-                    push @greater, $ver;
-                }
-                elsif ($op eq '>=') {
-                    push @greater, $ver;
-                    push @equal, $ver;
-                }
-                elsif ($op eq '<') {
-                    push @lower, $ver;
-                }
-                elsif ($op eq '<=') {
-                    push @lower, $ver;
-                    push @equal, $ver;
-                }
-                elsif ($op eq '!=') {
-                    push @not_equal, $ver;
-                }
-                elsif ($op eq '=') {
-                    push @equal, $ver;
-                }
-                else {
-                    die "unknown operator '$op' in '$expr'";
-                }
-            }
-            else {
-                die "unknown version range '$expr'";
-            }
-        }
-    }
-    return { greater => \@greater, lower => \@lower, equal => \@equal, not_equal => \@not_equal };
+  return releases_in_range($all_versions, $clauses);
 }
 
 sub _skip_report ($report, $reason) {
   my $id = $report->{id} // '<unknown>';
+  $report->{_skip_reason} = $reason;
   warn "$id $reason. Skipping.";
   return;
 }
 
-# return true if all is well, false if report should be skipped.
+sub _warn_once ($message) {
+  return if $WARNED_MESSAGES{$message}++;
+  warn "$message";
+}
+
 sub _apply_hotfixes ($report, $dist) {
-  return unless defined $report->{affected_versions};
-  return unless defined $report->{distribution};
+  return _skip_report($report, 'missing affected_versions') if !defined $report->{affected_versions};
+  return _skip_report($report, 'missing distribution') if !defined $report->{distribution};
 
   if ($report->{distribution} ne $dist) {
-      warn "$report->{id} has mixed dists: $report->{distribution} and $dist";
-      return;
+    return _skip_report($report, "has mixed dists: $report->{distribution} and $dist");
   }
 
-  # (silently) convert mixed data so they are always arrayrefs.
   foreach my $k (qw(cves references affected_versions)) {
     if (!ref $report->{$k}) {
       if (!defined $report->{$k} || $report->{$k} eq '') {
@@ -212,86 +668,204 @@ sub _apply_hotfixes ($report, $dist) {
     }
   }
 
-  # we can't continue unless we know the affected_versions.
   if (!all { defined } $report->{affected_versions}->@*) {
-    warn "$report->{id} has undefined values in $report->{affected_versions}. Skipping.";
-    return;
+    return _skip_report($report, 'has undefined values in affected_versions');
   }
 
   if ($report->{cves}->@* > 1) {
-      warn "$report->{id} has more than one CVE associated with it";
-      $report->{cves} = [$report->{cves}[0]];
+    _warn_once("$report->{id} has more than one CVE associated with it");
   }
   $report->{cve_id} = $report->{cves}[0];
 
-  # now that we have affected_versions as an arrayref,
-  # we go through it and sanitize its elements.
   my @sanitized_versions;
+  my (@missing_sign_examples, @double_equals_examples, @leading_space_examples);
+  my ($missing_sign_count, $double_equals_count, $leading_space_count) = (0, 0, 0);
   foreach my $version ($report->{affected_versions}->@*) {
     my @raw_ands = split /,/ => $version;
     my @sanitized_ands;
+
     foreach my $and (@raw_ands) {
-      # drop leading spaces.
       if ($and =~ /\A\s+/) {
-        warn "$report->{id} has leading spaces in version '$and'! fixing";
+        $leading_space_count++;
+        push @leading_space_examples, $and if @leading_space_examples < 3;
         $and =~ s/\A\s+//;
       }
 
-      # forces mandatory symbol before number.
       if ($and =~ /\A(>=?|<=?|=)\d/) {
-        push @sanitized_ands, $and; # all is well with the world;
+        push @sanitized_ands, $and;
       }
       else {
         if ($and =~ /\A\d/) {
-          warn "$report->{id} affected_versions should always provide a sign before the number in: '$version'. Assuming '='";
+          $missing_sign_count++;
+          push @missing_sign_examples, $and if @missing_sign_examples < 3;
           push @sanitized_ands, "=$and";
           next;
         }
-        # convert "==" to "=".
         elsif ($and =~ /\A==\d/) {
-          warn "$report->{id} has '==' in '$version' ($and), should be '='.";
+          $double_equals_count++;
+          push @double_equals_examples, $and if @double_equals_examples < 3;
           push @sanitized_ands, substr($and, 1);
           next;
         }
         else {
           return _skip_report(
             $report,
-            "has unparseable affected_versions clause '$and' in '$version'"
+            "has unparseable affected_versions clause '$and' in '$version'",
           );
         }
       }
     }
-    return _skip_report($report, "has no acceptable version in '$version'")
-      if @sanitized_ands == 0;
+
+    return _skip_report($report, "has no acceptable version in '$version'") if @sanitized_ands == 0;
+
     if (@sanitized_ands > 1) {
-        if (any { $_ =~ /\A=/ } @sanitized_ands) {
-          return _skip_report(
-            $report,
-            "has ambiguous affected_versions '$version' ('=' bundled with range clauses)"
-          );
+      if (any { $_ =~ /\A=/ } @sanitized_ands) {
+        return _skip_report(
+          $report,
+          "has ambiguous affected_versions '$version' ('=' bundled with range clauses)",
+        );
+      }
+
+      my ($gt_count, $lt_count, $lower_end, $higher_end) = (0, 0, undef, undef);
+      foreach my $and (@sanitized_ands) {
+        if ($and =~ /\A\s*>=?\s*(\d+)/) {
+          $lower_end = $1;
+          $gt_count++;
         }
-        else {
-          my ($gt_count, $lt_count, $lower_end, $higher_end) = (0, 0, undef, undef);
-          foreach my $and (@sanitized_ands) {
-            if ($and =~ /\A\s*>=?\s*(\d+)/) {
-              $lower_end = $1;
-              $gt_count++;
-            }
-            elsif ($and =~ /\A\s*<=?\s*(\d+)/) {
-              $higher_end = $1;
-              $lt_count++;
-            }
-          }
-          if ($gt_count > 1 || $lt_count > 1) {
-            warn "$report->{id} has more than 1 range bundled together in '$version'\n";
-          }
-          elsif ($gt_count == 1 && $lt_count == 1 && $lower_end > $higher_end) {
-            warn "$report->{id} has invalid range in '$version'\n";
-          }
+        elsif ($and =~ /\A\s*<=?\s*(\d+)/) {
+          $higher_end = $1;
+          $lt_count++;
         }
       }
-      push @sanitized_versions, join(',', @sanitized_ands);
+      warn "$report->{id} has more than 1 range bundled together in '$version'\n" if $gt_count > 1 || $lt_count > 1;
+      warn "$report->{id} has invalid range in '$version'\n" if $gt_count == 1 && $lt_count == 1 && $lower_end > $higher_end;
+    }
+
+    push @sanitized_versions, join(',', @sanitized_ands);
   }
+
+  _warn_once(
+    sprintf "%s affected_versions had leading spaces; fixed %d clause(s)%s\n",
+      $report->{id},
+      $leading_space_count,
+      @leading_space_examples ? ' (examples: ' . join(', ', @leading_space_examples) . ')' : ''
+  ) if $leading_space_count;
+
+  _warn_once(
+    sprintf "%s affected_versions omitted an operator; assumed '=' for %d clause(s)%s\n",
+      $report->{id},
+      $missing_sign_count,
+      @missing_sign_examples ? ' (examples: ' . join(', ', @missing_sign_examples) . ')' : ''
+  ) if $missing_sign_count;
+
+  _warn_once(
+    sprintf "%s affected_versions used '=='; normalized %d clause(s)%s\n",
+      $report->{id},
+      $double_equals_count,
+      @double_equals_examples ? ' (examples: ' . join(', ', @double_equals_examples) . ')' : ''
+  ) if $double_equals_count;
+
   $report->{affected_versions} = \@sanitized_versions;
+  delete $report->{_skip_reason};
   return 1;
+}
+
+sub _write_html_report ($path, $rows) {
+  my $out = path($path);
+  $out->parent->mkpath;
+
+  my (%status_counts, %determination_counts);
+  foreach my $row ($rows->@*) {
+    $status_counts{$row->{status}}++;
+    $determination_counts{$row->{determination}}++;
+  }
+
+  my $summary_html = join "\n", map {
+    '<li><strong>' . _html_escape($_) . '</strong>: ' . ($status_counts{$_} // 0) . '</li>'
+  } sort keys %status_counts;
+
+  my $determination_html = join "\n", map {
+    '<li><strong>' . _html_escape($_) . '</strong>: ' . ($determination_counts{$_} // 0) . '</li>'
+  } sort keys %determination_counts;
+
+  my $rows_html = join "\n", map {
+    '<tr>'
+      . '<td>' . _html_escape($_->{status}) . '</td>'
+      . '<td>' . _html_escape($_->{determination}) . '</td>'
+      . '<td>' . _html_escape($_->{source}) . '</td>'
+      . '<td>' . _html_escape($_->{cna}) . '</td>'
+      . '<td>' . _html_escape($_->{distribution}) . '</td>'
+      . '<td>' . _html_escape($_->{cve_id}) . '</td>'
+      . '<td>' . _html_escape($_->{cpansa_id}) . '</td>'
+      . '<td>' . _html_escape($_->{enriched_fields}) . '</td>'
+      . '<td>' . _html_escape($_->{title}) . '</td>'
+      . '<td>' . _html_escape($_->{note}) . '</td>'
+      . '</tr>'
+  } $rows->@*;
+
+  $out->spew_utf8(<<"HTML");
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>cpansa-feed validation report</title>
+  <style>
+    :root { color-scheme: light; }
+    body { font-family: Georgia, "Times New Roman", serif; margin: 2rem; background: #f6f3ea; color: #1d1a16; }
+    h1, h2 { margin-bottom: 0.3rem; }
+    p { max-width: 70rem; }
+    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+    .card { background: #fffdf8; border: 1px solid #d9cdb8; padding: 1rem 1.2rem; }
+    table { width: 100%; border-collapse: collapse; background: #fffdf8; }
+    th, td { border: 1px solid #d9cdb8; padding: 0.5rem; text-align: left; vertical-align: top; }
+    th { background: #efe4cf; position: sticky; top: 0; }
+    tbody tr:nth-child(odd) { background: #fcf8ef; }
+    .table-wrap { overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>cpansa-feed validation report</h1>
+  <p>This report shows which source was used for each emitted advisory and which records were skipped. It is intended for manual validation of source-of-truth decisions.</p>
+  <div class="meta">
+    <section class="card">
+      <h2>Status counts</h2>
+      <ul>
+$summary_html
+      </ul>
+    </section>
+    <section class="card">
+      <h2>Determinations</h2>
+      <ul>
+$determination_html
+      </ul>
+    </section>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Determination</th>
+          <th>Source</th>
+          <th>CNA</th>
+          <th>Distribution</th>
+          <th>CVE</th>
+          <th>CPANSA</th>
+          <th>Enriched From CPANSA</th>
+          <th>Title</th>
+          <th>Note</th>
+        </tr>
+      </thead>
+      <tbody>
+$rows_html
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
+HTML
+}
+
+sub _html_escape ($value) {
+  return xml_escape($value // '');
 }

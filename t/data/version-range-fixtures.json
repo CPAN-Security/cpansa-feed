@@ -1,0 +1,83 @@
+[
+  {
+    "name": "perl disjoint ranges preserve OR semantics",
+    "affected_versions": [
+      ">=5.41.0,<=5.41.10",
+      ">=5.39.0,<5.40.2",
+      ">=5.33.1,<5.38.4"
+    ],
+    "releases": [
+      { "release": "XSAWYERX/perl-5.033000", "version_numified": "5.033000" },
+      { "release": "ETHER/perl-5.033001", "version_numified": "5.033001" },
+      { "release": "XSAWYERX/perl-5.038003", "version_numified": "5.038003" },
+      { "release": "SHAY/perl-5.038004", "version_numified": "5.038004" },
+      { "release": "BOOK/perl-5.039006", "version_numified": "5.039006" },
+      { "release": "BOOK/perl-5.040001", "version_numified": "5.040001" },
+      { "release": "BOOK/perl-5.040002", "version_numified": "5.040002" },
+      { "release": "BOOK/perl-5.041001", "version_numified": "5.041001" },
+      { "release": "MAUKE/perl-5.041010", "version_numified": "5.041010" },
+      { "release": "ETHER/perl-5.041011", "version_numified": "5.041011" }
+    ],
+    "expected_releases": [
+      "BOOK/perl-5.039006",
+      "BOOK/perl-5.040001",
+      "BOOK/perl-5.041001",
+      "ETHER/perl-5.033001",
+      "MAUKE/perl-5.041010",
+      "XSAWYERX/perl-5.038003"
+    ]
+  },
+  {
+    "name": "open ended upper bound includes all later releases",
+    "affected_versions": [
+      ">=0.999922"
+    ],
+    "releases": [
+      { "release": "KRAIH/Mojolicious-0.999921", "version_numified": "0.999921" },
+      { "release": "KRAIH/Mojolicious-0.999922", "version_numified": "0.999922" },
+      { "release": "SRI/Mojolicious-1.0", "version_numified": "1.0" },
+      { "release": "SRI/Mojolicious-9.42", "version_numified": "9.42" }
+    ],
+    "expected_releases": [
+      "KRAIH/Mojolicious-0.999922",
+      "SRI/Mojolicious-1.0",
+      "SRI/Mojolicious-9.42"
+    ]
+  },
+  {
+    "name": "inclusive upper bound includes exact endpoint",
+    "affected_versions": [
+      ">=1.21,<=3.05"
+    ],
+    "releases": [
+      { "release": "LDS/Crypt-CBC-1.20", "version_numified": "1.20" },
+      { "release": "LDS/Crypt-CBC-1.22", "version_numified": "1.22" },
+      { "release": "TIMLEGGE/Crypt-CBC-3.05", "version_numified": "3.05" },
+      { "release": "TIMLEGGE/Crypt-CBC-3.06", "version_numified": "3.06" }
+    ],
+    "expected_releases": [
+      "LDS/Crypt-CBC-1.22",
+      "TIMLEGGE/Crypt-CBC-3.05"
+    ]
+  },
+  {
+    "name": "exact and not equal clauses stay within one OR set",
+    "affected_versions": [
+      "=1.0",
+      ">=2.0,<2.3,!=2.1"
+    ],
+    "releases": [
+      { "release": "AUTHOR/Foo-0.9", "version_numified": "0.9" },
+      { "release": "AUTHOR/Foo-1.0", "version_numified": "1.0" },
+      { "release": "AUTHOR/Foo-2.0", "version_numified": "2.0" },
+      { "release": "AUTHOR/Foo-2.1", "version_numified": "2.1" },
+      { "release": "AUTHOR/Foo-2.2", "version_numified": "2.2" },
+      { "release": "AUTHOR/Foo-2.3", "version_numified": "2.3" }
+    ],
+    "expected_releases": [
+      "AUTHOR/Foo-1.0",
+      "AUTHOR/Foo-2.0",
+      "AUTHOR/Foo-2.2"
+    ]
+  }
+]
