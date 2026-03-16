@@ -15,16 +15,14 @@ my %opt = (
 );
 
 GetOptions(
-  \%opt,
-  "cpansa-json=s",
-  "cpansa-url=s",
-  "cvelist-dir=s",
-  "cvelist-repo=s",
+  "cpansa-json=s" => \$opt{cpansa_json},
+  "cpansa-url=s" => \$opt{cpansa_url},
+  "cvelist-dir=s" => \$opt{cvelist_dir},
+  "cvelist-repo=s" => \$opt{cvelist_repo},
 ) or die "invalid options\n";
 
-my $cpansa = update_cpansa_json($opt{cpansa_json}, defined $opt{"cpansa-url"} ? (url => $opt{"cpansa-url"}) : ());
-my $cvelist = update_cvelist_repo($opt{cvelist_dir}, defined $opt{"cvelist-repo"} ? (repo => $opt{"cvelist-repo"}) : ());
+my $cpansa = update_cpansa_json($opt{cpansa_json}, defined $opt{cpansa_url} ? (url => $opt{cpansa_url}) : ());
+my $cvelist = update_cvelist_repo($opt{cvelist_dir}, defined $opt{cvelist_repo} ? (repo => $opt{cvelist_repo}) : ());
 
 binmode(STDOUT, ":encoding(UTF-8)");
 print encode_json({ cpansa => $cpansa, cvelist => $cvelist });
-
