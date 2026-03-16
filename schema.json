@@ -4,14 +4,18 @@
   "type": "object",
   "additionalProperties": false,
   "patternProperties": {
-    "^[A-Za-z0-9]+$": {
+    "^[A-Za-z0-9_-]+$": {
       "description": "distribution name to an array of report data",
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["affected_versions", "cpansa_id"],
+        "additionalProperties": false,
+        "required": ["affected_versions", "distribution", "version_range", "affected_releases"],
         "properties": {
+          "cpansa_id": {
+            "type": "string"
+          },
           "affected_versions": {
             "type": "array",
             "minItems": 1,
@@ -42,6 +46,31 @@
           },
           "severity": {
             "enum": ["minor", "medium", "moderate", "high", "critical"]
+          },
+          "distribution": {
+            "type": "string"
+          },
+          "version_range": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "affected_releases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cve_id": {
+            "type": "string"
+          },
+          "cve": {
+            "type": "object"
+          },
+          "title": {
+            "type": "string"
           }
         }
       }
