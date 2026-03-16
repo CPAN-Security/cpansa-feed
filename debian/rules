@@ -1,0 +1,7 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_test:
+	prove -l t/version-range.t t/cpansa-json.t t/test-cve-compat.t

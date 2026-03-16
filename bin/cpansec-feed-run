@@ -1,0 +1,59 @@
+#!/usr/bin/env perl
+use 5.36.0;
+use warnings;
+
+use FindBin qw($Bin);
+use Getopt::Long qw(GetOptions);
+use Path::Tiny;
+use lib "$Bin/../lib";
+
+use CPANSec::Feed::CPANSA qw(load_database);
+use CPANSec::Feed::DataUpdate qw(update_cpansa_json update_cvelist_repo);
+use CPANSec::Feed::FileUtil qw(write_if_changed);
+use CPANSec::Feed::Generator qw(write_feed_json);
+
+my %opt = (
+  state_dir => $ENV{CPANSEC_FEED_STATE_DIR} // "var",
+  output_dir => $ENV{CPANSEC_FEED_OUTPUT_DIR} // "_site",
+  cvelist_dir => $ENV{CPANSEC_FEED_CVELIST_DIR} // "cvelistV5",
+  schema_path => $ENV{CPANSEC_FEED_SCHEMA_PATH} // "schema.json",
+  metacpan_cache_ttl => $ENV{CPANSEC_FEED_METACPAN_CACHE_TTL} // 6 * 60 * 60,
+  (defined $ENV{CPANSEC_FEED_CPANSA_URL} ? (cpansa_url => $ENV{CPANSEC_FEED_CPANSA_URL}) : ()),
+  (defined $ENV{CPANSEC_FEED_CVELIST_REPO} ? (cvelist_repo => $ENV{CPANSEC_FEED_CVELIST_REPO}) : ()),
+);
+
+GetOptions(
+  "state-dir=s" => \$opt{state_dir},
+  "output-dir=s" => \$opt{output_dir},
+  "cvelist-dir=s" => \$opt{cvelist_dir},
+  "schema-path=s" => \$opt{schema_path},
+  "cpansa-url=s" => \$opt{cpansa_url},
+  "cvelist-repo=s" => \$opt{cvelist_repo},
+  "metacpan-cache-ttl=i" => \$opt{metacpan_cache_ttl},
+) or die "invalid options\n";
+
+my $state_dir = path($opt{state_dir});
+$state_dir->mkpath;
+my $output_dir = path($opt{output_dir});
+$output_dir->mkpath;
+
+my $cpansa_json = $state_dir->child("cpan-security-advisory.json");
+update_cpansa_json($cpansa_json, defined $opt{cpansa_url} ? (url => $opt{cpansa_url}) : ());
+update_cvelist_repo($opt{cvelist_dir}, defined $opt{cvelist_repo} ? (repo => $opt{cvelist_repo}) : ());
+
+my $db = load_database($cpansa_json);
+write_feed_json(
+  cpansa_db => $db,
+  cve_dir => $opt{cvelist_dir},
+  schema_path => $opt{schema_path},
+  report_html => $output_dir->child("report.html")->stringify,
+  output => $output_dir->child("cpansa.json")->stringify,
+  metacpan_cache_dir => $state_dir->child("metacpan-cache")->stringify,
+  metacpan_cache_ttl => $opt{metacpan_cache_ttl},
+);
+
+write_if_changed($output_dir->child("schema.json"), path($opt{schema_path})->slurp_raw, raw => 1);
+write_if_changed(
+  $output_dir->child("index.html"),
+  qq{<h1>cpansa-feed</h1><a href="cpansa.json">cpansa.json</a><br><a href="report.html">validation report</a>},
+);

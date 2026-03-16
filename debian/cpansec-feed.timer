@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh and generate the CPANSec feed every hour
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=1h
+Persistent=true
+Unit=cpansec-feed.service
+
+[Install]
+WantedBy=timers.target

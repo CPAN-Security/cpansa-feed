@@ -1,0 +1,17 @@
+[Unit]
+Description=Generate the CPANSec feed
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=cpansec-feed
+EnvironmentFile=-/etc/default/cpansec-feed
+WorkingDirectory=/var/lib/cpansec-feed
+ExecStart=/usr/bin/cpansec-feed-run
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+UMask=0077

@@ -1,0 +1,22 @@
+{
+  "meta": {
+    "source": "fixture"
+  },
+  "dists": {
+    "JSON-XS": {
+      "main_module": "JSON::XS",
+      "versions": [],
+      "advisories": [
+        {
+          "id": "CPANSA-JSON-XS-2025-40928",
+          "distribution": "JSON-XS",
+          "affected_versions": ["<4.04"],
+          "cves": ["CVE-2025-40928"]
+        }
+      ]
+    }
+  },
+  "module2dist": {
+    "JSON::XS": "JSON-XS"
+  }
+}

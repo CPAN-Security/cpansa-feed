@@ -1,0 +1,31 @@
+Source: cpansec-feed
+Section: perl
+Priority: optional
+Maintainer: CPANSec Feed Maintainers <packages@example.invalid>
+Build-Depends:
+ debhelper-compat (= 13),
+ perl,
+ libjson-maybexs-perl,
+ libjson-schema-modern-perl,
+ libmojolicious-perl,
+ libpath-tiny-perl
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+Homepage: https://github.com/hackeriet/cpansa-feed
+
+Package: cpansec-feed
+Architecture: all
+Depends:
+ ${misc:Depends},
+ ${perl:Depends},
+ ca-certificates,
+ git,
+ libjson-maybexs-perl,
+ libjson-schema-modern-perl,
+ libmojolicious-perl,
+ libpath-tiny-perl,
+ perl
+Description: generate CPANSec advisory feed JSON from CVE and CPANSA sources
+ This package downloads the latest published CPAN security advisory JSON,
+ refreshes cvelistV5, and generates the CPANSec feed JSON plus an HTML
+ validation report.

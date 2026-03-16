@@ -1,0 +1,2 @@
+d /var/lib/cpansec-feed 0750 cpansec-feed cpansec-feed -
+d /var/lib/cpansec-feed/output 0750 cpansec-feed cpansec-feed -

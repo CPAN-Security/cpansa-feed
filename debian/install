@@ -1,0 +1,8 @@
+bin/cpansec-feed-generate usr/bin/
+bin/cpansec-feed-run usr/bin/
+bin/cpansec-feed-update-data usr/bin/
+lib/CPANSec/Feed/*.pm usr/share/perl5/CPANSec/Feed/
+lib/CPANSA/Feed/*.pm usr/share/perl5/CPANSA/Feed/
+schema.json usr/share/cpansec-feed/
+README.md usr/share/doc/cpansec-feed/
+debian/cpansec-feed.default etc/default/cpansec-feed

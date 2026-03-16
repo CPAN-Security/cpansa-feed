@@ -1,0 +1,30 @@
+#!/usr/bin/env perl
+use 5.36.0;
+use warnings;
+
+use FindBin qw($Bin);
+use Getopt::Long qw(GetOptions);
+use JSON::MaybeXS qw(encode_json);
+use lib "$Bin/../lib";
+
+use CPANSec::Feed::DataUpdate qw(update_cpansa_json update_cvelist_repo);
+
+my %opt = (
+  cpansa_json => "var/cpan-security-advisory.json",
+  cvelist_dir => "cvelistV5",
+);
+
+GetOptions(
+  \%opt,
+  "cpansa-json=s",
+  "cpansa-url=s",
+  "cvelist-dir=s",
+  "cvelist-repo=s",
+) or die "invalid options\n";
+
+my $cpansa = update_cpansa_json($opt{cpansa_json}, defined $opt{"cpansa-url"} ? (url => $opt{"cpansa-url"}) : ());
+my $cvelist = update_cvelist_repo($opt{cvelist_dir}, defined $opt{"cvelist-repo"} ? (repo => $opt{"cvelist-repo"}) : ());
+
+binmode(STDOUT, ":encoding(UTF-8)");
+print encode_json({ cpansa => $cpansa, cvelist => $cvelist });
+

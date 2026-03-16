@@ -7,7 +7,7 @@ use Test::More;
 use version;
 
 use lib 'lib';
-use CPANSA::Feed::VersionRange qw(releases_in_range split_version_range);
+use CPANSec::Feed::VersionRange qw(releases_in_range split_version_range);
 
 my $fixtures = decode_json(path('t/data/version-range-fixtures.json')->slurp_raw);
 

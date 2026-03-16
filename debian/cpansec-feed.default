@@ -1,0 +1,16 @@
+# /etc/default/cpansec-feed
+#
+# Shell-style environment settings for the systemd service.
+# Uncomment and adjust as needed.
+
+CPANSEC_FEED_STATE_DIR=/var/lib/cpansec-feed
+CPANSEC_FEED_OUTPUT_DIR=/var/lib/cpansec-feed/output
+CPANSEC_FEED_CVELIST_DIR=/var/lib/cpansec-feed/cvelistV5
+CPANSEC_FEED_SCHEMA_PATH=/usr/share/cpansec-feed/schema.json
+
+# Default upstream sources.
+# CPANSEC_FEED_CPANSA_URL=https://github.com/briandfoy/cpan-security-advisory/releases/latest/download/cpan-security-advisory.json
+# CPANSEC_FEED_CVELIST_REPO=https://github.com/CVEProject/cvelistV5.git
+
+# Refresh MetaCPAN cache entries older than this many seconds.
+CPANSEC_FEED_METACPAN_CACHE_TTL=21600
