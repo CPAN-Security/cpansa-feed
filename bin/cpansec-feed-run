@@ -105,10 +105,13 @@ sub _publish_site ($output_dir, $builder) {
 
   my $releases = $publish_root->child('.releases');
   $releases->mkpath;
+  chmod 02755, $publish_root->stringify;
+  chmod 02755, $releases->stringify;
 
   my $release_name = time . '-' . $$;
   my $staging = $releases->child($release_name);
   $staging->mkpath;
+  chmod 02755, $staging->stringify;
 
   eval {
     $builder->($staging);
