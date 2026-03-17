@@ -4,13 +4,14 @@ use warnings;
 
 use FindBin qw($Bin);
 use Getopt::Long qw(GetOptions);
+use Mojo::Util qw(xml_escape);
 use Path::Tiny;
 use lib "$Bin/../lib";
 
 use CPANSec::Feed::CPANSA qw(load_database);
 use CPANSec::Feed::DataUpdate qw(update_cpansa_json update_cvelist_repo);
 use CPANSec::Feed::FileUtil qw(write_if_changed);
-use CPANSec::Feed::Generator qw(write_feed_json);
+use CPANSec::Feed::Generator qw(write_feed_json html_generation_metadata);
 
 my %opt = (
   state_dir => $ENV{CPANSEC_FEED_STATE_DIR} // "var",
@@ -35,27 +36,112 @@ GetOptions(
 my $state_dir = path($opt{state_dir});
 $state_dir->mkpath;
 my $output_dir = path($opt{output_dir});
-$output_dir->mkpath;
 
 my $cpansa_json = $state_dir->child("cpan-security-advisory.json");
-update_cpansa_json($cpansa_json, defined $opt{cpansa_url} ? (url => $opt{cpansa_url}) : ());
-update_cvelist_repo($opt{cvelist_dir}, defined $opt{cvelist_repo} ? (repo => $opt{cvelist_repo}) : ());
+my $cpansa_meta = update_cpansa_json($cpansa_json, defined $opt{cpansa_url} ? (url => $opt{cpansa_url}) : ());
+my $cvelist_meta = update_cvelist_repo($opt{cvelist_dir}, defined $opt{cvelist_repo} ? (repo => $opt{cvelist_repo}) : ());
+my $html_meta = html_generation_metadata(
+  cpansa => $cpansa_meta,
+  cvelist => $cvelist_meta,
+);
 
 my $db = load_database($cpansa_json);
-write_feed_json(
-  cpansa_db => $db,
-  cve_dir => $opt{cvelist_dir},
-  schema_path => $opt{schema_path},
-  report_html => $output_dir->child("report.html")->stringify,
-  output => $output_dir->child("cpansa.json")->stringify,
-  output_mode => 0644,
-  metacpan_cache_dir => $state_dir->child("metacpan-cache")->stringify,
-  metacpan_cache_ttl => $opt{metacpan_cache_ttl},
-);
+_publish_site($output_dir, sub ($publish_dir) {
+  write_feed_json(
+    cpansa_db => $db,
+    cve_dir => $opt{cvelist_dir},
+    schema_path => $opt{schema_path},
+    report_html => $publish_dir->child("report.html")->stringify,
+    report_metadata => $html_meta,
+    output => $publish_dir->child("cpansa.json")->stringify,
+    output_mode => 0644,
+    metacpan_cache_dir => $state_dir->child("metacpan-cache")->stringify,
+    metacpan_cache_ttl => $opt{metacpan_cache_ttl},
+  );
 
-write_if_changed($output_dir->child("schema.json"), path($opt{schema_path})->slurp_raw, raw => 1, mode => 0644);
-write_if_changed(
-  $output_dir->child("index.html"),
-  qq{<h1>cpansa-feed</h1><a href="cpansa.json">cpansa.json</a><br><a href="report.html">validation report</a>},
-  mode => 0644,
-);
+  write_if_changed($publish_dir->child("schema.json"), path($opt{schema_path})->slurp_raw, raw => 1, mode => 0644);
+  write_if_changed(
+    $publish_dir->child("index.html"),
+    _index_html($html_meta),
+    mode => 0644,
+  );
+});
+
+sub _index_html ($metadata) {
+  my $rows = join "\n", map {
+    my $label = $_;
+    my $value = defined $metadata->{$_} && $metadata->{$_} ne '' ? $metadata->{$_} : 'n/a';
+    qq{<li><strong>} . xml_escape($label) . qq{</strong>: } . xml_escape($value) . qq{</li>};
+  } sort keys $metadata->%*;
+
+  return <<"HTML";
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>cpansec-feed</title>
+</head>
+<body>
+  <h1>cpansec-feed</h1>
+  <p><a href="cpansa.json">cpansa.json</a><br><a href="report.html">validation report</a></p>
+  <h2>Source Metadata</h2>
+  <ul>
+$rows
+  </ul>
+</body>
+</html>
+HTML
+}
+
+sub _publish_site ($output_dir, $builder) {
+  if ($output_dir->basename ne 'current') {
+    $output_dir->mkpath;
+    $builder->($output_dir);
+    return;
+  }
+
+  my $publish_root = $output_dir->parent;
+  $publish_root->mkpath;
+
+  my $releases = $publish_root->child('.releases');
+  $releases->mkpath;
+
+  my $release_name = time . '-' . $$;
+  my $staging = $releases->child($release_name);
+  $staging->mkpath;
+
+  eval {
+    $builder->($staging);
+
+    my $current_dir = (-l $output_dir->stringify || $output_dir->is_dir)
+      ? $output_dir->realpath
+      : undef;
+    if ($current_dir && _site_matches($current_dir, $staging)) {
+      $staging->remove_tree({ safe => 0 });
+      return 1;
+    }
+
+    my $tmp_link = $publish_root->child('.current.tmp');
+    unlink $tmp_link->stringify if -e $tmp_link->stringify || -l $tmp_link->stringify;
+    symlink('.releases/' . $release_name, $tmp_link->stringify)
+      or die "unable to create symlink $tmp_link: $!";
+    rename($tmp_link->stringify, $output_dir->stringify)
+      or die "unable to publish $output_dir: $!";
+    1;
+  } or do {
+    my $error = $@ || 'unknown publish failure';
+    $staging->remove_tree({ safe => 0 }) if $staging->exists;
+    die $error;
+  };
+}
+
+sub _site_matches ($left, $right) {
+  for my $name (qw(cpansa.json report.html schema.json index.html)) {
+    my $left_file = $left->child($name);
+    my $right_file = $right->child($name);
+    return 0 if !$left_file->is_file || !$right_file->is_file;
+    return 0 if $left_file->slurp_raw ne $right_file->slurp_raw;
+  }
+
+  return 1;
+}

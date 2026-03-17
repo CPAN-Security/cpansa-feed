@@ -11,15 +11,17 @@ use JSON::Schema::Modern;
 use List::Util qw(any all);
 use Mojo::Util qw(xml_escape);
 use Path::Tiny;
+use Time::Piece;
 
 use CPANSec::Feed::FileUtil qw(write_if_changed);
 use CPANSec::Feed::VersionRange qw(releases_in_range split_version_range);
 
-our @EXPORT_OK = qw(generate_feed write_feed_json load_metacpan_cache_file metacpan_cache_is_stale);
+our @EXPORT_OK = qw(generate_feed write_feed_json load_metacpan_cache_file metacpan_cache_is_stale html_generation_metadata);
 
 my %METACPAN_RELEASES_BY_DIST;
 my %CPANSEC_SKIP_NOTES;
 my $LAST_VERSION_RESOLUTION_ERROR;
+my $LAST_CVE_LOOKUP_ERROR;
 my %WARNING_SUMMARY;
 my $METACPAN_CACHE_DIR;
 my $METACPAN_CACHE_TTL = 6 * 60 * 60;
@@ -34,13 +36,14 @@ sub generate_feed (%args) {
   %CPANSEC_SKIP_NOTES = ();
   %WARNING_SUMMARY = ();
   $LAST_VERSION_RESOLUTION_ERROR = undef;
+  $LAST_CVE_LOOKUP_ERROR = undef;
   $METACPAN_CACHE_DIR = defined $args{metacpan_cache_dir} ? path($args{metacpan_cache_dir}) : undef;
   $METACPAN_CACHE_TTL = $args{metacpan_cache_ttl} // 6 * 60 * 60;
 
   my ($feed, $report_rows) = _build_feed($cpansa_db, $cve_path);
 
   _emit_warning_summary();
-  _write_html_report($args{report_html}, $report_rows) if $args{report_html};
+  _write_html_report($args{report_html}, $report_rows, $args{report_metadata}) if $args{report_html};
   _validate_feed($feed, $args{schema_path}) if $args{schema_path};
 
   return wantarray ? ($feed, $report_rows) : $feed;
@@ -264,7 +267,7 @@ sub _build_feed ($db, $cve_path) {
       my $cve = _find_cve($cve_path, $report->{cve_id});
       my $is_cpansec = _is_cpansec_cve($cve);
       if (defined $report->{cve_id} && !defined $cve) {
-        my $note = 'Referenced CVE could not be resolved from cvelistV5';
+        my $note = $LAST_CVE_LOOKUP_ERROR // 'Referenced CVE could not be resolved from cvelistV5';
         push @report_rows, {
           status => 'skipped',
           determination => 'unresolvable cve payload',
@@ -310,7 +313,7 @@ sub _build_feed ($db, $cve_path) {
           cpansa_id => $report->{id} // '',
           enriched_fields => '',
           title => '',
-          note => 'Failed to resolve version range against MetaCPAN releases',
+          note => $LAST_VERSION_RESOLUTION_ERROR // 'Failed to resolve version range against MetaCPAN releases',
         };
         next;
       }
@@ -598,9 +601,11 @@ sub _fetch_title ($cve) {
 }
 
 sub _find_cve ($cve_path, $cve_id) {
+  $LAST_CVE_LOOKUP_ERROR = undef;
   return unless $cve_id;
   if ($cve_id !~ /\ACVE-(\d{4})-(\d+)\z/) {
-    warn "non-CVE identifier '$cve_id'";
+    $LAST_CVE_LOOKUP_ERROR = "non-CVE identifier '$cve_id'";
+    warn $LAST_CVE_LOOKUP_ERROR;
     return;
   }
 
@@ -616,7 +621,8 @@ sub _find_cve ($cve_path, $cve_id) {
   }
 
   unless ($complete_path) {
-    warn "unable to find $cve_id in cvelistV5";
+    $LAST_CVE_LOOKUP_ERROR = "unable to find $cve_id in cvelistV5";
+    warn $LAST_CVE_LOOKUP_ERROR;
     return;
   }
 
@@ -899,7 +905,16 @@ sub _apply_hotfixes ($report, $dist) {
   return 1;
 }
 
-sub _write_html_report ($path, $rows) {
+sub _metadata_list_html ($metadata) {
+  return '<li><strong>Unavailable</strong></li>' if ref($metadata) ne 'HASH' || !keys $metadata->%*;
+
+  return join "\n", map {
+    my $value = defined $metadata->{$_} && $metadata->{$_} ne '' ? $metadata->{$_} : 'n/a';
+    '<li><strong>' . xml_escape($_) . '</strong>: ' . xml_escape($value) . '</li>'
+  } sort keys $metadata->%*;
+}
+
+sub _write_html_report ($path, $rows, $metadata = undef) {
   my $out = path($path);
   $out->parent->mkpath;
 
@@ -916,6 +931,16 @@ sub _write_html_report ($path, $rows) {
   my $determination_html = join "\n", map {
     '<li><strong>' . xml_escape($_) . '</strong>: ' . ($determination_counts{$_} // 0) . '</li>'
   } sort keys %determination_counts;
+
+  my @skipped = grep { ($_->{status} // '') eq 'skipped' } $rows->@*;
+  my $skipped_html = @skipped
+    ? join "\n", map {
+        '<li><strong>' . xml_escape($_->{cpansa_id} || $_->{cve_id} || $_->{distribution} || 'unknown') . '</strong>: '
+          . xml_escape($_->{note} // $_->{determination} // 'skipped') . '</li>'
+      } @skipped
+    : '<li><strong>None</strong></li>';
+
+  my $metadata_html = _metadata_list_html($metadata);
 
   my $rows_html = join "\n", map {
     '<tr>'
@@ -968,6 +993,18 @@ $summary_html
 $determination_html
       </ul>
     </section>
+    <section class="card">
+      <h2>Source Metadata</h2>
+      <ul>
+$metadata_html
+      </ul>
+    </section>
+    <section class="card">
+      <h2>Skipped Records</h2>
+      <ul>
+$skipped_html
+      </ul>
+    </section>
   </div>
   <div class="table-wrap">
     <table>
@@ -993,6 +1030,33 @@ $rows_html
 </body>
 </html>
 HTML
+}
+
+sub html_generation_metadata (%args) {
+  my $generated_at = $args{generated_at} // gmtime()->datetime . 'Z';
+  my $cpansa = $args{cpansa} // {};
+  my $cvelist = $args{cvelist} // {};
+
+  my %metadata = (
+    'generated at' => $generated_at,
+  );
+
+  if (ref($cpansa) eq 'HASH') {
+    $metadata{'cpansa source url'} = $cpansa->{url} if defined $cpansa->{url};
+    $metadata{'cpansa source commit'} = $cpansa->{meta}{commit} if ref($cpansa->{meta}) eq 'HASH' && defined $cpansa->{meta}{commit};
+    $metadata{'cpansa source date'} = $cpansa->{meta}{date} if ref($cpansa->{meta}) eq 'HASH' && defined $cpansa->{meta}{date};
+    $metadata{'cpansa downloaded at'} = $cpansa->{fetched_at} if defined $cpansa->{fetched_at};
+    $metadata{'cpansa file time'} = $cpansa->{file_mtime} if defined $cpansa->{file_mtime};
+  }
+
+  if (ref($cvelist) eq 'HASH') {
+    $metadata{'cvelist repo'} = $cvelist->{repo} if defined $cvelist->{repo};
+    $metadata{'cvelist head'} = $cvelist->{head} if defined $cvelist->{head};
+    $metadata{'cvelist head time'} = $cvelist->{head_time} if defined $cvelist->{head_time};
+    $metadata{'cvelist updated at'} = $cvelist->{fetched_at} if defined $cvelist->{fetched_at};
+  }
+
+  return \%metadata;
 }
 
 1;

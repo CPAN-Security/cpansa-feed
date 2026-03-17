@@ -1,5 +1,9 @@
-cpansec-feed (0.1.3) unstable; urgency=medium
+cpansec-feed (0.1.4) unstable; urgency=medium
 
+  * Publish the site atomically through a current/ symlink.
+  * Keep current files untouched when generated content is unchanged.
+  * Add source freshness metadata to the HTML pages.
+  * Include exact skip reasons in the validation report.
   * Allow the service to write published output under /var/www/cpansec-feed.
   * Publish generated assets under /var/www/cpansec-feed.
   * Make published output files world-readable for nginx.
@@ -8,4 +12,4 @@ cpansec-feed (0.1.3) unstable; urgency=medium
   * Drop tmpfiles entries that conflicted with DynamicUser.
   * Add make targets for the podman-based workflow.
 
- -- CPANSec Feed Maintainers <packages@example.invalid>  Tue, 17 Mar 2026 02:15:00 +0100
+ -- CPANSec Feed Maintainers <packages@example.invalid>  Tue, 17 Mar 2026 02:35:00 +0100

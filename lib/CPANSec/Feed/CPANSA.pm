@@ -7,6 +7,7 @@ use Exporter qw(import);
 use HTTP::Tiny;
 use JSON::MaybeXS qw(decode_json);
 use Path::Tiny;
+use Time::Piece;
 
 our @EXPORT_OK = qw(latest_release_url load_database download_database);
 
@@ -47,12 +48,16 @@ sub download_database ($destination, %args) {
   my $tmp = $file->sibling($file->basename . '.tmp');
   $tmp->spew_raw($response->{content});
   $tmp->move($file);
+  my $stat = $file->stat;
+  my $mtime = $stat ? $stat->mtime : undef;
 
   return {
     path => $file->stringify,
     url => $url,
     dists => scalar keys $decoded->{dists}->%*,
     meta => $decoded->{meta},
+    fetched_at => gmtime()->datetime . 'Z',
+    file_mtime => defined $mtime ? gmtime($mtime)->datetime . 'Z' : undef,
   };
 }
 

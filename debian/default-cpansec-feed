@@ -4,7 +4,7 @@
 # Uncomment and adjust as needed.
 
 CPANSEC_FEED_STATE_DIR=/var/lib/cpansec-feed
-CPANSEC_FEED_OUTPUT_DIR=/var/www/cpansec-feed
+CPANSEC_FEED_OUTPUT_DIR=/var/www/cpansec-feed/current
 CPANSEC_FEED_CVELIST_DIR=/var/lib/cpansec-feed/cvelistV5
 CPANSEC_FEED_SCHEMA_PATH=/usr/share/cpansec-feed/schema.json
 

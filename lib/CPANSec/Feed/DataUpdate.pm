@@ -5,6 +5,7 @@ use warnings;
 
 use Exporter qw(import);
 use Path::Tiny;
+use Time::Piece;
 
 use CPANSec::Feed::CPANSA qw(download_database);
 
@@ -28,11 +29,17 @@ sub update_cvelist_repo ($destination, %args) {
   }
 
   my $head = _capture(['git', '-C', $dir->stringify, 'rev-parse', '--short=12', 'HEAD']);
+  my $head_time = _capture(['git', '-C', $dir->stringify, 'show', '-s', '--format=%cI', 'HEAD']);
+  my $fetch_head = $dir->child('.git', 'FETCH_HEAD')->stat;
+  my $head_stat = $dir->child('.git', 'HEAD')->stat;
+  my $mtime = $fetch_head ? $fetch_head->mtime : ($head_stat ? $head_stat->mtime : undef);
 
   return {
     path => $dir->stringify,
     repo => $repo,
     head => $head,
+    head_time => $head_time,
+    fetched_at => defined $mtime ? gmtime($mtime)->datetime . 'Z' : undef,
   };
 }
 
