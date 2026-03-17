@@ -11,6 +11,7 @@ StateDirectory=cpansec-feed
 EnvironmentFile=-/etc/default/cpansec-feed
 WorkingDirectory=/var/lib/cpansec-feed
 ExecStart=/usr/bin/cpansec-feed-run
+ReadWritePaths=/var/www/cpansec-feed
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
