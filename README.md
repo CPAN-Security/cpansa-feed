@@ -95,10 +95,10 @@ On an installed system, the service writes to:
 - `/var/lib/cpansec-feed/cpan-security-advisory.json`
 - `/var/lib/cpansec-feed/metacpan-cache/`
 - `/var/lib/cpansec-feed/cvelistV5/`
-- `/var/lib/cpansec-feed/output/cpansa.json`
-- `/var/lib/cpansec-feed/output/report.html`
-- `/var/lib/cpansec-feed/output/schema.json`
-- `/var/lib/cpansec-feed/output/index.html`
+- `/var/www/cpansec-feed/cpansa.json`
+- `/var/www/cpansec-feed/report.html`
+- `/var/www/cpansec-feed/schema.json`
+- `/var/www/cpansec-feed/index.html`
 
 Those generated output files are only replaced when contents change.
 MetaCPAN cache entries older than 6 hours are treated as stale and refetched on demand. Set `--metacpan-cache-ttl 0` to disable expiry.

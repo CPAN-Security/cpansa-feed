@@ -48,12 +48,14 @@ write_feed_json(
   schema_path => $opt{schema_path},
   report_html => $output_dir->child("report.html")->stringify,
   output => $output_dir->child("cpansa.json")->stringify,
+  output_mode => 0644,
   metacpan_cache_dir => $state_dir->child("metacpan-cache")->stringify,
   metacpan_cache_ttl => $opt{metacpan_cache_ttl},
 );
 
-write_if_changed($output_dir->child("schema.json"), path($opt{schema_path})->slurp_raw, raw => 1);
+write_if_changed($output_dir->child("schema.json"), path($opt{schema_path})->slurp_raw, raw => 1, mode => 0644);
 write_if_changed(
   $output_dir->child("index.html"),
   qq{<h1>cpansa-feed</h1><a href="cpansa.json">cpansa.json</a><br><a href="report.html">validation report</a>},
+  mode => 0644,
 );

@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 DynamicUser=yes
+SupplementaryGroups=www-data
 StateDirectory=cpansec-feed
 EnvironmentFile=-/etc/default/cpansec-feed
 WorkingDirectory=/var/lib/cpansec-feed

@@ -26,6 +26,7 @@ sub write_if_changed ($path, $content, %args) {
     $tmp->spew_utf8($content);
   }
   $tmp->move($file);
+  chmod $args{mode}, $file->stringify if defined $args{mode};
   return 1;
 }
 

@@ -48,12 +48,13 @@ sub generate_feed (%args) {
 
 sub write_feed_json (%args) {
   my $output = delete $args{output};
+  my $output_mode = delete $args{output_mode};
   my $feed = generate_feed(%args);
   my $json = JSON::MaybeXS->new(canonical => 1, utf8 => 1);
   my $encoded = $json->encode($feed);
 
   if ($output) {
-    write_if_changed($output, $encoded, raw => 1);
+    write_if_changed($output, $encoded, raw => 1, defined $output_mode ? (mode => $output_mode) : ());
   }
 
   return $encoded;
@@ -931,7 +932,7 @@ sub _write_html_report ($path, $rows) {
       . '</tr>'
   } $rows->@*;
 
-  write_if_changed($out, <<"HTML");
+  write_if_changed($out, <<"HTML", mode => 0644);
 <!doctype html>
 <html lang="en">
 <head>
