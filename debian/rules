@@ -3,5 +3,9 @@
 %:
 	dh $@
 
+override_dh_auto_install:
+	dh_auto_install
+	install -D -m 0644 debian/default-cpansec-feed debian/cpansec-feed/etc/default/cpansec-feed
+
 override_dh_auto_test:
 	prove -l t/metacpan-cache.t t/version-range.t t/cpansa-json.t t/test-cve-compat.t
