@@ -1,5 +1,6 @@
-cpansec-feed (0.1.8) unstable; urgency=medium
+cpansec-feed (0.1.10) unstable; urgency=medium
 
+  * Use a service umask that keeps published files traversable by nginx.
   * Improve report layout for long metadata and skipped-record lists.
   * Create /var/www/cpansec-feed/.releases via tmpfiles for stable ownership.
   * Prune old published site releases after successful swaps.
@@ -16,4 +17,4 @@ cpansec-feed (0.1.8) unstable; urgency=medium
   * Drop tmpfiles entries that conflicted with DynamicUser.
   * Add make targets for the podman-based workflow.
 
- -- CPANSec Feed Maintainers <packages@example.invalid>  Tue, 17 Mar 2026 03:15:00 +0100
+ -- CPANSec Feed Maintainers <packages@example.invalid>  Tue, 17 Mar 2026 03:30:00 +0100

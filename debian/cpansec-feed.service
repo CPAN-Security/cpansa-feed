@@ -16,4 +16,4 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
 ProtectHome=yes
-UMask=0077
+UMask=0022

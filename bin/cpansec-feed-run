@@ -109,7 +109,8 @@ sub _publish_site ($output_dir, $builder) {
   my $release_name = time . '-' . $$;
   my $staging = $releases->child($release_name);
   $staging->mkpath;
-  chmod 02755, $staging->stringify;
+  chmod 02755, $staging->stringify
+    or die "unable to chmod $staging: $!";
 
   eval {
     $builder->($staging);
