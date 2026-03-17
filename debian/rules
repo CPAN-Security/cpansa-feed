@@ -4,4 +4,4 @@
 	dh $@
 
 override_dh_auto_test:
-	prove -l t/version-range.t t/cpansa-json.t t/test-cve-compat.t
+	prove -l t/metacpan-cache.t t/version-range.t t/cpansa-json.t t/test-cve-compat.t
