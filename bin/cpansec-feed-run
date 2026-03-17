@@ -105,8 +105,6 @@ sub _publish_site ($output_dir, $builder) {
 
   my $releases = $publish_root->child('.releases');
   $releases->mkpath;
-  chmod 02755, $publish_root->stringify;
-  chmod 02755, $releases->stringify;
 
   my $release_name = time . '-' . $$;
   my $staging = $releases->child($release_name);
@@ -130,12 +128,35 @@ sub _publish_site ($output_dir, $builder) {
       or die "unable to create symlink $tmp_link: $!";
     rename($tmp_link->stringify, $output_dir->stringify)
       or die "unable to publish $output_dir: $!";
+    _prune_releases($releases, $output_dir, keep => 2);
     1;
   } or do {
     my $error = $@ || 'unknown publish failure';
     $staging->remove_tree({ safe => 0 }) if $staging->exists;
     die $error;
   };
+}
+
+sub _prune_releases ($releases, $current_link, %args) {
+  my $keep = $args{keep} // 2;
+  my $current_target = readlink($current_link->stringify);
+  my $current_name = defined $current_target ? path($current_target)->basename : undef;
+
+  my @dirs = sort {
+    $b->stat->mtime <=> $a->stat->mtime
+  } grep { $_->is_dir } $releases->children;
+
+  my %keep_names;
+  $keep_names{$current_name} = 1 if defined $current_name;
+  foreach my $dir (@dirs) {
+    last if scalar(keys %keep_names) >= $keep;
+    $keep_names{$dir->basename} = 1;
+  }
+
+  foreach my $dir (@dirs) {
+    next if $keep_names{$dir->basename};
+    $dir->remove_tree({ safe => 0 });
+  }
 }
 
 sub _site_matches ($left, $right) {

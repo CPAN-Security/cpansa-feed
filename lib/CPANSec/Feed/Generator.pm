@@ -968,13 +968,19 @@ sub _write_html_report ($path, $rows, $metadata = undef) {
     body { font-family: Georgia, "Times New Roman", serif; margin: 2rem; background: #f6f3ea; color: #1d1a16; }
     h1, h2 { margin-bottom: 0.3rem; }
     p { max-width: 70rem; }
-    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+    .meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0; align-items: start; }
     .card { background: #fffdf8; border: 1px solid #d9cdb8; padding: 1rem 1.2rem; }
+    .card ul { margin: 0.5rem 0 0; padding-left: 1.25rem; }
+    .card li { overflow-wrap: anywhere; }
+    .skipped { margin: 0 0 1.5rem; }
+    .skipped ul { columns: 2; column-gap: 2rem; }
+    .skipped li { break-inside: avoid; margin-bottom: 0.5rem; overflow-wrap: anywhere; }
     table { width: 100%; border-collapse: collapse; background: #fffdf8; }
     th, td { border: 1px solid #d9cdb8; padding: 0.5rem; text-align: left; vertical-align: top; }
     th { background: #efe4cf; position: sticky; top: 0; }
     tbody tr:nth-child(odd) { background: #fcf8ef; }
     .table-wrap { overflow-x: auto; }
+    \@media (max-width: 1000px) { .meta { grid-template-columns: 1fr; } .skipped ul { columns: 1; } }
   </style>
 </head>
 <body>
@@ -999,13 +1005,13 @@ $determination_html
 $metadata_html
       </ul>
     </section>
-    <section class="card">
-      <h2>Skipped Records</h2>
-      <ul>
-$skipped_html
-      </ul>
-    </section>
   </div>
+  <section class="card skipped">
+    <h2>Skipped Records</h2>
+    <ul>
+$skipped_html
+    </ul>
+  </section>
   <div class="table-wrap">
     <table>
       <thead>
