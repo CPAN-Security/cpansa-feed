@@ -1,3 +1,16 @@
+cpansec-feed (0.2.0) unstable; urgency=medium
+
+  * Redesign validation report: one row per vulnerability, sorted newest first.
+  * Add Published and Updated date columns with relative time display.
+  * Make Distribution and date columns sortable.
+  * Add clickable links for CVE records (cve.org) and CPANSA files (GitHub).
+  * Stop merging CPANSA data into CPANSec authoritative CVE records.
+  * Deduplicate CPANSA source advisories and report rows.
+  * Distinguish CPANSec CVE, CPANSA (external CNA), and CPANSA-only statuses.
+  * Rename report title to CPANSec Feed.
+
+ -- CPANSec Feed Maintainers <packages@example.invalid>  Fri, 04 Apr 2026 21:30:00 +0000
+
 cpansec-feed (0.1.11) unstable; urgency=medium
 
   * Stop setting setgid on per-release publish directories.

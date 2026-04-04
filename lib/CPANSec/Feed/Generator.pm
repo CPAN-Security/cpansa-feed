@@ -96,6 +96,8 @@ sub _build_feed ($db, $cve_path) {
         cve_id => $cve_id,
         cpansa_id => '',
         enriched_fields => '',
+        published => _published_from_cve($cve) // '',
+        updated => _updated_from_cve($cve) // '',
         title => _fetch_title($cve) // '',
         note => 'CVE has no affected packages',
       };
@@ -114,6 +116,8 @@ sub _build_feed ($db, $cve_path) {
           cve_id => $cve_id,
           cpansa_id => '',
           enriched_fields => '',
+          published => _published_from_cve($cve) // '',
+        updated => _updated_from_cve($cve) // '',
           title => _fetch_title($cve) // '',
           note => 'Affected entry has no packageName/product',
         };
@@ -122,26 +126,14 @@ sub _build_feed ($db, $cve_path) {
 
       my $cpansa_match = _find_cpansa_match($cpansa_by_cve->{$cve_id}, $dist);
       my $cpansa_enrichment;
-      my @notes = ('CPANSec authoritative');
-      my %enriched_from_cpansa;
 
       if ($cpansa_match && _apply_hotfixes($cpansa_match, $cpansa_match->{distribution})) {
         $cpansa_enrichment = $cpansa_match;
-        $enriched_from_cpansa{$_} = 1 for _cpansa_enrichment_fields($cve, $cpansa_enrichment);
-      }
-      elsif ($cpansa_match) {
-        push @notes, 'ignored invalid CPANSA enrichment';
       }
 
       my $affected_versions = _affected_versions_from_cve($dist, $affected);
-      if ((!$affected_versions || !$affected_versions->@*) && $cpansa_enrichment) {
-        $affected_versions = $cpansa_enrichment->{affected_versions};
-        push @notes, 'filled affected_versions from CPANSA';
-        $enriched_from_cpansa{affected_versions} = 1;
-      }
-
       if (!$affected_versions || !$affected_versions->@*) {
-        my $note = 'No usable affected versions in CVE or CPANSA';
+        my $note = 'No usable affected versions in CVE';
         $CPANSEC_SKIP_NOTES{$cve_id}{$dist} = $note;
         push @report_rows, {
           status => 'skipped',
@@ -152,6 +144,8 @@ sub _build_feed ($db, $cve_path) {
           cve_id => $cve_id,
           cpansa_id => $cpansa_match ? $cpansa_match->{id} : '',
           enriched_fields => '',
+          published => _published_from_cve($cve) // '',
+        updated => _updated_from_cve($cve) // '',
           title => _fetch_title($cve) // '',
           note => $note,
         };
@@ -170,8 +164,10 @@ sub _build_feed ($db, $cve_path) {
           cna => _cna_short_name($cve),
           distribution => $dist,
           cve_id => $cve_id,
-          cpansa_id => $cpansa_enrichment ? $cpansa_enrichment->{id} : '',
-          enriched_fields => join(', ', sort keys %enriched_from_cpansa),
+          cpansa_id => $cpansa_match ? $cpansa_match->{id} : '',
+          enriched_fields => '',
+          published => _published_from_cve($cve) // '',
+        updated => _updated_from_cve($cve) // '',
           title => _fetch_title($cve) // '',
           note => $note,
         };
@@ -181,17 +177,17 @@ sub _build_feed ($db, $cve_path) {
       my $record = _compact_record({
         cpansa_id => $cpansa_enrichment ? $cpansa_enrichment->{id} : undef,
         affected_versions => $affected_versions,
-        cves => _merge_lists([$cve_id], $cpansa_enrichment ? $cpansa_enrichment->{cves} : []),
-        description => _cve_description($cve) // ($cpansa_enrichment ? $cpansa_enrichment->{description} : undef),
-        reported => _reported_from_cve($cve) // ($cpansa_enrichment ? $cpansa_enrichment->{reported} : undef),
-        severity => _severity_from_cve($cve) // ($cpansa_enrichment ? $cpansa_enrichment->{severity} : undef),
+        cves => [$cve_id],
+        description => _cve_description($cve),
+        reported => _reported_from_cve($cve),
+        severity => _severity_from_cve($cve),
         distribution => $dist,
         version_range => $affected_versions,
         affected_releases => $affected_releases,
         cve_id => $cve_id,
         cve => $cve,
-        title => _fetch_title($cve) // _cve_description($cve) // ($cpansa_enrichment ? $cpansa_enrichment->{description} : undef),
-        references => _merge_lists(_cve_references($cve), $cpansa_enrichment ? $cpansa_enrichment->{references} : []),
+        title => _fetch_title($cve) // _cve_description($cve),
+        references => _cve_references($cve),
       });
 
       push $feed{$dist}->@*, $record;
@@ -200,15 +196,17 @@ sub _build_feed ($db, $cve_path) {
 
       push @report_rows, {
         status => 'included',
-        determination => $cpansa_enrichment ? 'cpansec authoritative + cpansa enrichment' : 'cpansec authoritative',
+        determination => 'cpansec authoritative',
         source => 'cvelistV5',
         cna => _cna_short_name($cve),
         distribution => $dist,
         cve_id => $cve_id,
         cpansa_id => $cpansa_enrichment ? $cpansa_enrichment->{id} : '',
-        enriched_fields => join(', ', sort keys %enriched_from_cpansa),
+        enriched_fields => '',
+        published => _published_from_cve($cve) // '',
+        updated => _updated_from_cve($cve) // '',
         title => $record->{title} // '',
-        note => join('; ', @notes),
+        note => '',
       };
     }
   }
@@ -225,6 +223,8 @@ sub _build_feed ($db, $cve_path) {
           cve_id => '',
           cpansa_id => $report->{id} // '',
           enriched_fields => '',
+          published => $report->{reported} // '',
+        updated => '',
           title => '',
           note => 'DarkPAN advisories are excluded',
         };
@@ -241,8 +241,10 @@ sub _build_feed ($db, $cve_path) {
           cve_id => '',
           cpansa_id => $report->{id} // '',
           enriched_fields => '',
+          published => $report->{reported} // '',
+        updated => '',
           title => '',
-          note => 'CPANSA advisory already merged into a CPANSec CVE record',
+          note => 'CVE already covered by CPANSec authoritative record',
         };
         next;
       }
@@ -258,6 +260,8 @@ sub _build_feed ($db, $cve_path) {
           cve_id => '',
           cpansa_id => $report->{id} // '',
           enriched_fields => '',
+          published => $report->{reported} // '',
+        updated => '',
           title => '',
           note => $report->{_skip_reason} // 'Sanitization failed',
         };
@@ -277,6 +281,8 @@ sub _build_feed ($db, $cve_path) {
           cve_id => $report->{cve_id} // '',
           cpansa_id => $report->{id} // '',
           enriched_fields => '',
+          published => $report->{reported} // '',
+        updated => '',
           title => '',
           note => $note,
         };
@@ -295,6 +301,8 @@ sub _build_feed ($db, $cve_path) {
           cve_id => $report->{cve_id} // '',
           cpansa_id => $report->{id} // '',
           enriched_fields => '',
+          published => $report->{reported} // '',
+        updated => '',
           title => '',
           note => 'Duplicate advisory for a CVE already emitted from cvelistV5',
         };
@@ -312,6 +320,8 @@ sub _build_feed ($db, $cve_path) {
           cve_id => $report->{cve_id} // '',
           cpansa_id => $report->{id} // '',
           enriched_fields => '',
+          published => $report->{reported} // '',
+        updated => '',
           title => '',
           note => $LAST_VERSION_RESOLUTION_ERROR // 'Failed to resolve version range against MetaCPAN releases',
         };
@@ -337,13 +347,17 @@ sub _build_feed ($db, $cve_path) {
       push $feed{$dist}->@*, $record;
       push @report_rows, {
         status => 'included',
-        determination => $is_cpansec ? 'cpansa fallback for cpansec cve' : 'cpansa external cna',
+        determination => $is_cpansec ? 'cpansa fallback for cpansec cve'
+          : defined $report->{cve_id} ? 'cpansa external cna'
+          : 'cpansa only',
         source => 'CPANSA',
         cna => _cna_short_name($cve),
         distribution => $dist,
         cve_id => $report->{cve_id} // '',
         cpansa_id => $report->{id} // '',
         enriched_fields => '',
+        published => ($cve ? _published_from_cve($cve) : undef) // $report->{reported} // '',
+        updated => ($cve ? _updated_from_cve($cve) : undef) // '',
         title => $record->{title} // '',
         note => $is_cpansec
           ? 'CPANSec CVE was not emitted from cvelistV5; fallback reason: '
@@ -362,7 +376,8 @@ sub _index_cpansa ($db) {
   my (%by_cve, %by_dist);
 
   foreach my $dist (sort keys $db->{dists}->%*) {
-    my @advisories = $db->{dists}{$dist}{advisories}->@*;
+    my %seen_id;
+    my @advisories = grep { !$seen_id{$_->{id} // ''}++ } $db->{dists}{$dist}{advisories}->@*;
     $by_dist{$dist} = \@advisories;
 
     foreach my $report (@advisories) {
@@ -471,42 +486,18 @@ sub _find_cpansa_match ($reports, $dist) {
   return $exact // $reports->[0];
 }
 
-sub _cpansa_enrichment_fields ($cve, $cpansa) {
-  return if !$cpansa;
-
-  my @fields;
-
-  push @fields, 'cpansa_id' if defined $cpansa->{id} && $cpansa->{id} ne '';
-
-  if (_normalize_list($cpansa->{references})->@*) {
-    my %cve_refs = map { $_ => 1 } _cve_references($cve)->@*;
-    push @fields, 'references'
-      if any { !$cve_refs{$_} } _normalize_list($cpansa->{references})->@*;
-  }
-
-  if (_normalize_list($cpansa->{cves})->@* > 1) {
-    push @fields, 'related_cves';
-  }
-
-  if ((!defined _reported_from_cve($cve) || _reported_from_cve($cve) eq '') && defined $cpansa->{reported} && $cpansa->{reported} ne '') {
-    push @fields, 'reported';
-  }
-
-  if ((!defined _severity_from_cve($cve) || _severity_from_cve($cve) eq '') && defined $cpansa->{severity} && $cpansa->{severity} ne '') {
-    push @fields, 'severity';
-  }
-
-  if ((!defined _cve_description($cve) || _cve_description($cve) eq '') && defined $cpansa->{description} && $cpansa->{description} ne '') {
-    push @fields, 'description';
-  }
-
-  return @fields;
-}
-
 sub _reported_from_cve ($cve) {
   return _date_only($cve->{cveMetadata}{datePublished})
     // _date_only($cve->{cveMetadata}{dateReserved})
     // _date_only($cve->{cveMetadata}{dateUpdated});
+}
+
+sub _published_from_cve ($cve) {
+  return _date_only($cve->{cveMetadata}{datePublished});
+}
+
+sub _updated_from_cve ($cve) {
+  return _date_only($cve->{cveMetadata}{dateUpdated});
 }
 
 sub _cna_short_name ($cve) {
@@ -918,85 +909,91 @@ sub _write_html_report ($path, $rows, $metadata = undef) {
   my $out = path($path);
   $out->parent->mkpath;
 
-  my (%status_counts, %determination_counts);
-  foreach my $row ($rows->@*) {
-    $status_counts{$row->{status}}++;
-    $determination_counts{$row->{determination}}++;
-  }
-
-  my $summary_html = join "\n", map {
-    '<li><strong>' . xml_escape($_) . '</strong>: ' . ($status_counts{$_} // 0) . '</li>'
-  } sort keys %status_counts;
-
-  my $determination_html = join "\n", map {
-    '<li><strong>' . xml_escape($_) . '</strong>: ' . ($determination_counts{$_} // 0) . '</li>'
-  } sort keys %determination_counts;
-
-  my @skipped = grep { ($_->{status} // '') eq 'skipped' } $rows->@*;
-  my $skipped_html = @skipped
-    ? join "\n", map {
-        '<li><strong>' . xml_escape($_->{cpansa_id} || $_->{cve_id} || $_->{distribution} || 'unknown') . '</strong>: '
-          . xml_escape($_->{note} // $_->{determination} // 'skipped') . '</li>'
-      } @skipped
-    : '<li><strong>None</strong></li>';
-
   my $metadata_html = _metadata_list_html($metadata);
 
-  my $rows_html = join "\n", map {
-    '<tr>'
-      . '<td>' . xml_escape($_->{status}) . '</td>'
-      . '<td>' . xml_escape($_->{determination}) . '</td>'
-      . '<td>' . xml_escape($_->{source}) . '</td>'
-      . '<td>' . xml_escape($_->{cna}) . '</td>'
-      . '<td>' . xml_escape($_->{distribution}) . '</td>'
-      . '<td>' . xml_escape($_->{cve_id}) . '</td>'
-      . '<td>' . xml_escape($_->{cpansa_id}) . '</td>'
-      . '<td>' . xml_escape($_->{enriched_fields}) . '</td>'
-      . '<td>' . xml_escape($_->{title}) . '</td>'
-      . '<td>' . xml_escape($_->{note}) . '</td>'
-      . '</tr>'
+  # Deduplicate: one row per vulnerability.
+  # Prefer 'included' over 'skipped' when both exist for the same advisory.
+  my (%seen_key, %included_cpansa);
+  my @deduped;
+  # Process included first so they win over skipped duplicates
+  my @ordered = sort {
+    (($a->{status} // '') eq 'included' ? 0 : 1) <=> (($b->{status} // '') eq 'included' ? 0 : 1)
   } $rows->@*;
+  for my $row (@ordered) {
+    my $dist = $row->{distribution} // '';
+    my $cve = $row->{cve_id} // '';
+    my $cpansa = $row->{cpansa_id} // '';
+    my $key = join("\0", $cve, $cpansa, $dist);
+    next if $seen_key{$key}++;
+    # If this CPANSA ID was already included (via a CVE row), skip regardless of distribution
+    if ($cpansa ne '' && $cve eq '' && $included_cpansa{$cpansa}) {
+      next;
+    }
+    $included_cpansa{$cpansa} = 1 if $cpansa ne '' && ($row->{status} // '') eq 'included';
+    push @deduped, $row;
+  }
+
+  my @sorted = sort { ($b->{published} // '') cmp ($a->{published} // '') } @deduped;
+
+  my %status_counts;
+  foreach my $row (@sorted) {
+    $status_counts{_display_status($row)}++;
+  }
+
+  my @status_order = grep { $status_counts{$_} } (
+    'CPANSec CVE', 'CPANSA (external CNA)', 'CPANSA only', 'CPANSA (CPANSec fallback)',
+    sort grep { !/^CPANSec CVE$|^CPANSA / } keys %status_counts
+  );
+  my $summary_html = join "\n", map {
+    '<li><strong>' . xml_escape($_) . '</strong>: ' . ($status_counts{$_} // 0) . '</li>'
+  } @status_order;
+
+  my $rows_html = join "\n", map { _report_table_row($_) } @sorted;
 
   write_if_changed($out, <<"HTML", mode => 0644);
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>cpansa-feed validation report</title>
+  <title>CPANSec Feed validation report</title>
   <style>
     :root { color-scheme: light; }
-    body { font-family: Georgia, "Times New Roman", serif; margin: 2rem; background: #f6f3ea; color: #1d1a16; }
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 2rem; background: #f6f3ea; color: #1d1a16; font-size: 0.9rem; }
     h1, h2 { margin-bottom: 0.3rem; }
     p { max-width: 70rem; }
-    .meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0; align-items: start; }
+    .meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0; align-items: start; }
     .card { background: #fffdf8; border: 1px solid #d9cdb8; padding: 1rem 1.2rem; }
     .card ul { margin: 0.5rem 0 0; padding-left: 1.25rem; }
     .card li { overflow-wrap: anywhere; }
-    .skipped { margin: 0 0 1.5rem; }
-    .skipped ul { columns: 2; column-gap: 2rem; }
-    .skipped li { break-inside: avoid; margin-bottom: 0.5rem; overflow-wrap: anywhere; }
     table { width: 100%; border-collapse: collapse; background: #fffdf8; }
-    th, td { border: 1px solid #d9cdb8; padding: 0.5rem; text-align: left; vertical-align: top; }
-    th { background: #efe4cf; position: sticky; top: 0; }
+    th, td { border: 1px solid #d9cdb8; padding: 0.35rem 0.5rem; text-align: left; vertical-align: top; }
+    th { background: #efe4cf; position: sticky; top: 0; z-index: 1; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { background: #e5d9c0; }
+    th.sortable::after { content: ' \\2195'; color: #8b7355; font-size: 0.8em; }
+    th.sort-asc::after { content: ' \\2191'; color: #1d1a16; }
+    th.sort-desc::after { content: ' \\2193'; color: #1d1a16; }
     tbody tr:nth-child(odd) { background: #fcf8ef; }
+    tr.skip { background: #fdf0f0 !important; }
     .table-wrap { overflow-x: auto; }
-    \@media (max-width: 1000px) { .meta { grid-template-columns: 1fr; } .skipped ul { columns: 1; } }
+    td.id { font-family: ui-monospace, monospace; font-size: 0.85em; white-space: nowrap; }
+    td.date { white-space: nowrap; font-size: 0.85em; }
+    .rel { color: #8b7355; font-size: 0.85em; }
+    a { color: #4a6fa5; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    td.title { max-width: 20rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    \@media (max-width: 1200px) { td.title { max-width: 12rem; } }
+    \@media (max-width: 1000px) { .meta { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
-  <h1>cpansa-feed validation report</h1>
-  <p>This report shows which source was used for each emitted advisory and which records were skipped. It is intended for manual validation of source-of-truth decisions.</p>
+  <h1>CPANSec Feed validation report</h1>
+  <p>Advisory source decisions, sorted newest first. For manual validation of feed contents.</p>
   <div class="meta">
     <section class="card">
-      <h2>Status counts</h2>
+      <h2>Summary</h2>
       <ul>
 $summary_html
-      </ul>
-    </section>
-    <section class="card">
-      <h2>Determinations</h2>
-      <ul>
-$determination_html
       </ul>
     </section>
     <section class="card">
@@ -1006,25 +1003,17 @@ $metadata_html
       </ul>
     </section>
   </div>
-  <section class="card skipped">
-    <h2>Skipped Records</h2>
-    <ul>
-$skipped_html
-    </ul>
-  </section>
   <div class="table-wrap">
-    <table>
+    <table id="report">
       <thead>
         <tr>
-          <th>Status</th>
-          <th>Determination</th>
-          <th>Source</th>
-          <th>CNA</th>
-          <th>Distribution</th>
+          <th class="sortable" data-col="0" data-type="text">Published</th>
+          <th class="sortable" data-col="1" data-type="text">Updated</th>
           <th>CVE</th>
-          <th>CPANSA</th>
-          <th>Enriched From CPANSA</th>
+          <th class="sortable" data-col="3" data-type="text">Distribution</th>
           <th>Title</th>
+          <th class="sortable" data-col="5" data-type="text">Status</th>
+          <th>CNA</th>
           <th>Note</th>
         </tr>
       </thead>
@@ -1033,9 +1022,118 @@ $rows_html
       </tbody>
     </table>
   </div>
+  <script>
+  // Append relative time to <time> elements
+  (function() {
+    var times = document.querySelectorAll('time[datetime]');
+    var now = Date.now();
+    times.forEach(function(el) {
+      var d = new Date(el.getAttribute('datetime'));
+      if (isNaN(d)) return;
+      var diff = now - d.getTime();
+      var days = Math.floor(diff / 86400000);
+      var label;
+      if (days < 0) label = 'future';
+      else if (days === 0) label = 'today';
+      else if (days === 1) label = '1d ago';
+      else if (days < 30) label = days + 'd ago';
+      else if (days < 365) label = Math.floor(days / 30) + 'mo ago';
+      else { var y = Math.floor(days / 365); label = y + 'y ago'; }
+      var span = document.createElement('span');
+      span.className = 'rel';
+      span.textContent = ' (' + label + ')';
+      el.parentNode.appendChild(span);
+    });
+  })();
+
+  // Column sorting
+  (function() {
+    var table = document.getElementById('report');
+    if (!table) return;
+    var headers = table.querySelectorAll('th.sortable');
+    var tbody = table.querySelector('tbody');
+    var currentCol = -1, currentDir = 0;
+
+    headers.forEach(function(th) {
+      th.addEventListener('click', function() {
+        var col = parseInt(th.getAttribute('data-col'));
+        var dir;
+        if (currentCol === col) { dir = currentDir === 1 ? -1 : 1; }
+        else { dir = 1; }
+        currentCol = col; currentDir = dir;
+
+        headers.forEach(function(h) { h.classList.remove('sort-asc', 'sort-desc'); });
+        th.classList.add(dir === 1 ? 'sort-asc' : 'sort-desc');
+
+        var rows = Array.from(tbody.querySelectorAll('tr'));
+        rows.sort(function(a, b) {
+          var at = (a.children[col] || {}).getAttribute && a.children[col].getAttribute('data-sort') || a.children[col].textContent || '';
+          var bt = (b.children[col] || {}).getAttribute && b.children[col].getAttribute('data-sort') || b.children[col].textContent || '';
+          return dir * at.localeCompare(bt);
+        });
+        rows.forEach(function(r) { tbody.appendChild(r); });
+      });
+    });
+  })();
+  </script>
 </body>
 </html>
 HTML
+}
+
+sub _display_status ($row) {
+  my $det = $row->{determination} // '';
+  return 'CPANSec CVE'                if $det eq 'cpansec authoritative';
+  return 'CPANSA (external CNA)'      if $det eq 'cpansa external cna';
+  return 'CPANSA only'                if $det eq 'cpansa only';
+  return 'CPANSA (CPANSec fallback)'   if $det eq 'cpansa fallback for cpansec cve';
+  return 'skipped: ' . $det           if ($row->{status} // '') eq 'skipped';
+  return $det || $row->{status} // '';
+}
+
+sub _report_table_row ($row) {
+  my $status = $row->{status} // '';
+  my $row_class = $status eq 'skipped' ? ' class="skip"' : '';
+
+  my $cve_id = $row->{cve_id} // '';
+
+  my $note = $row->{note} // '';
+  if ($row->{cpansa_id} && $row->{cpansa_id} ne '') {
+    my $cpansa_link = _cpansa_link($row->{cpansa_id}, $row->{distribution});
+    $note = $cpansa_link . ($note ne '' ? '; ' . xml_escape($note) : '');
+  }
+  else {
+    $note = xml_escape($note);
+  }
+
+  my $title = $row->{title} // '';
+
+  my $cve_html = $cve_id ne ''
+    ? '<a href="https://www.cve.org/CVERecord?id=' . xml_escape($cve_id) . '">' . xml_escape($cve_id) . '</a>'
+    : '';
+
+  return '<tr' . $row_class . '>'
+    . _time_td($row->{published})
+    . _time_td($row->{updated})
+    . '<td class="id">' . $cve_html . '</td>'
+    . '<td>' . xml_escape($row->{distribution} // '') . '</td>'
+    . '<td class="title" title="' . xml_escape($title) . '">' . xml_escape($title) . '</td>'
+    . '<td>' . xml_escape(_display_status($row)) . '</td>'
+    . '<td>' . xml_escape($row->{cna} // '') . '</td>'
+    . '<td>' . $note . '</td>'
+    . '</tr>';
+}
+
+sub _cpansa_link ($cpansa_id, $dist) {
+  my $file = 'CPANSA-' . ($dist // '') . '.yml';
+  my $url = 'https://github.com/briandfoy/cpan-security-advisory/blob/master/cpansa/' . $file;
+  return '<a href="' . xml_escape($url) . '">' . xml_escape($cpansa_id) . '</a>';
+}
+
+sub _time_td ($date) {
+  return '<td class="date"></td>' if !defined $date || $date eq '';
+  my $escaped = xml_escape($date);
+  return '<td class="date" data-sort="' . $escaped . '"><time datetime="' . $escaped . '">' . $escaped . '</time></td>';
 }
 
 sub html_generation_metadata (%args) {
