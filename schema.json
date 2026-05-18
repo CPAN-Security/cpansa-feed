@@ -45,7 +45,7 @@
             "format": "date"
           },
           "severity": {
-            "enum": ["minor", "medium", "moderate", "high", "critical"]
+            "enum": ["minor", "low", "medium", "moderate", "high", "critical"]
           },
           "distribution": {
             "type": "string"

@@ -1,3 +1,10 @@
+cpansec-feed (0.2.1) unstable; urgency=medium
+
+  * Add "low" to severity enum in JSON schema.
+  * Skip CPANSA entries with empty affected_versions.
+
+ -- CPANSec Feed Maintainers <packages@example.invalid>  Fri, 04 Apr 2026 22:00:00 +0000
+
 cpansec-feed (0.2.0) unstable; urgency=medium
 
   * Redesign validation report: one row per vulnerability, sorted newest first.

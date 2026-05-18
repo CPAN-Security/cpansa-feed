@@ -309,6 +309,24 @@ sub _build_feed ($db, $cve_path) {
         next;
       }
 
+      if (!$report->{affected_versions} || !$report->{affected_versions}->@*) {
+        push @report_rows, {
+          status => 'skipped',
+          determination => 'cpansa missing usable versions',
+          source => 'CPANSA',
+          cna => _cna_short_name($cve),
+          distribution => $dist,
+          cve_id => $report->{cve_id} // '',
+          cpansa_id => $report->{id} // '',
+          enriched_fields => '',
+          published => $report->{reported} // '',
+          updated => '',
+          title => '',
+          note => 'No usable affected versions in CPANSA advisory',
+        };
+        next;
+      }
+
       my $affected_releases = _safe_get_versions_from_range($dist, $report->{affected_versions});
       if (!defined $affected_releases) {
         push @report_rows, {
@@ -321,7 +339,7 @@ sub _build_feed ($db, $cve_path) {
           cpansa_id => $report->{id} // '',
           enriched_fields => '',
           published => $report->{reported} // '',
-        updated => '',
+          updated => '',
           title => '',
           note => $LAST_VERSION_RESOLUTION_ERROR // 'Failed to resolve version range against MetaCPAN releases',
         };

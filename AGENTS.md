@@ -87,7 +87,7 @@ make deb
 Run tests directly when Perl dependencies are already available locally:
 
 ```sh
-prove -l t/metacpan-cache.t t/version-range.t t/cpansa-json.t t/test-cve-compat.t
+prove -l t/metacpan-cache.t t/version-range.t t/cpansa-json.t t/generator.t t/schema.t t/test-cve-compat.t
 ```
 
 `t/test-cve-compat.t` skips when `Test::CVE` is not installed. Debian package builds use the same test list through `debian/rules`.
@@ -124,7 +124,7 @@ For changes in:
 - CPANSA loading/downloading assumptions: run `prove -l t/cpansa-json.t`.
 - MetaCPAN cache behavior: run `prove -l t/metacpan-cache.t`.
 - Feed compatibility with `Test::CVE`: run `prove -l t/test-cve-compat.t` when `Test::CVE` is installed.
-- Generator behavior or schema shape: run the full `prove -l ...` test list and, when input data is available, generate `_site/cpansa.json` against `schema.json`.
+- Generator behavior or schema shape: run `prove -l t/generator.t t/schema.t`, the full `prove -l ...` test list, and, when input data is available, generate `_site/cpansa.json` against `schema.json`.
 
 When changing Debian packaging, also check:
 
