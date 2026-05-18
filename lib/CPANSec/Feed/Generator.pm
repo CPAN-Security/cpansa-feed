@@ -174,20 +174,25 @@ sub _build_feed ($db, $cve_path) {
         next;
       }
 
+      my $description = _cve_description($cve);
+      my $severity = _severity_from_cve($cve);
+      my $title = _fetch_title($cve) // $description;
+      my $references = _cve_references($cve);
+
       my $record = _compact_record({
         cpansa_id => $cpansa_enrichment ? $cpansa_enrichment->{id} : undef,
         affected_versions => $affected_versions,
         cves => [$cve_id],
-        description => _cve_description($cve),
+        description => $description,
         reported => _reported_from_cve($cve),
-        severity => _severity_from_cve($cve),
+        severity => $severity,
         distribution => $dist,
         version_range => $affected_versions,
         affected_releases => $affected_releases,
         cve_id => $cve_id,
         cve => $cve,
-        title => _fetch_title($cve) // _cve_description($cve),
-        references => _cve_references($cve),
+        title => $title,
+        references => $references,
       });
 
       push $feed{$dist}->@*, $record;
@@ -552,7 +557,7 @@ sub _severity_from_cve ($cve) {
     foreach my $metric ($container->{metrics}->@*) {
       next if ref($metric) ne 'HASH';
       my $severity = lc($metric->{cvssV3_1}{baseSeverity} // '');
-      return $severity if $severity =~ /\A(?:minor|medium|moderate|high|critical)\z/;
+      return $severity if $severity =~ /\A(?:minor|low|medium|moderate|high|critical)\z/;
     }
   }
 

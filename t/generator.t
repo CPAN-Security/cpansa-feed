@@ -2,6 +2,7 @@ use 5.36.0;
 use warnings;
 
 use File::Temp qw(tempdir);
+use JSON::MaybeXS qw(encode_json);
 use Path::Tiny;
 use Test::More;
 
@@ -40,5 +41,76 @@ is(scalar $rows->@*, 1, 'one report row produced');
 is($rows->[0]{status}, 'skipped', 'advisory is reported as skipped');
 is($rows->[0]{determination}, 'cpansa missing usable versions', 'skip reason is explicit');
 is($rows->[0]{note}, 'No usable affected versions in CPANSA advisory', 'note explains missing versions');
+
+my $cve = {
+  dataType => 'CVE_RECORD',
+  dataVersion => '5.1',
+  cveMetadata => {
+    cveId => 'CVE-2026-46719',
+    assignerShortName => 'CPANSec',
+    datePublished => '2026-05-16T00:00:00.000Z',
+    dateUpdated => '2026-05-16T00:00:00.000Z',
+    state => 'PUBLISHED',
+  },
+  containers => {
+    cna => {
+      providerMetadata => {
+        shortName => 'CPANSec',
+      },
+      affected => [
+        {
+          packageName => 'Net-Statsd-Lite',
+          versions => [
+            {
+              status => 'affected',
+              version => '0',
+              lessThan => '0.9.0',
+            },
+          ],
+        },
+      ],
+      descriptions => [
+        {
+          lang => 'en',
+          value => 'Net::Statsd::Lite versions before 0.9.0 for Perl allowed metric injections',
+        },
+      ],
+      references => [
+        {
+          url => 'https://example.test/CVE-2026-46719',
+        },
+      ],
+    },
+  },
+};
+
+my $cve_dir = $tmpdir->child('cpansec-cves');
+$cve_dir->child('cves', '2026', '467xx')->mkpath;
+$cve_dir->child('cves', '2026', '467xx', 'CVE-2026-46719.json')->spew_raw(encode_json($cve));
+
+my $cache_dir = $tmpdir->child('metacpan-cache');
+$cache_dir->mkpath;
+$cache_dir->child(unpack('H*', 'Net-Statsd-Lite') . '.json')->spew_raw(encode_json([
+  {
+    release => 'CPANSEC/Net-Statsd-Lite-0.8.0',
+    version_numified => '0.8.0',
+  },
+]));
+
+my ($cve_feed) = generate_feed(
+  cpansa_db => { dists => {} },
+  cve_dir => $cve_dir,
+  metacpan_cache_dir => $cache_dir,
+  metacpan_cache_ttl => 0,
+);
+
+my $record = $cve_feed->{'Net-Statsd-Lite'}[0];
+ok($record, 'CPANSec CVE record was emitted');
+ok(!exists $record->{severity}, 'missing CVSS severity is omitted');
+is($record->{distribution}, 'Net-Statsd-Lite', 'distribution key remains aligned');
+is_deeply($record->{version_range}, ['<0.9.0'], 'version_range key remains aligned');
+is_deeply($record->{affected_releases}, ['CPANSEC/Net-Statsd-Lite-0.8.0'], 'affected_releases key remains aligned');
+is($record->{cve_id}, 'CVE-2026-46719', 'cve_id key remains aligned');
+ok(!grep { /^ARRAY\(/ || /^HASH\(/ } keys $record->%*, 'record has no stringified reference keys');
 
 done_testing;

@@ -1,3 +1,9 @@
+cpansec-feed (0.2.2) unstable; urgency=medium
+
+  * Fix malformed feed records when CPANSec CVEs lack severity metrics.
+
+ -- CPANSec Feed Maintainers <packages@example.invalid>  Mon, 19 May 2026 00:00:00 +0200
+
 cpansec-feed (0.2.1) unstable; urgency=medium
 
   * Add "low" to severity enum in JSON schema.
