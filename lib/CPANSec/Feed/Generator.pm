@@ -416,17 +416,18 @@ sub _merge_cpansa_advisories ($advisories) {
   return () if ref($advisories) ne 'ARRAY';
 
   my @merged;
-  my %by_id;
+  my %by_key;
   foreach my $report ($advisories->@*) {
     my $id = $report->{id} // '';
-    if ($id eq '' || !$by_id{$id}) {
+    my $key = _cpansa_merge_key($report);
+    if ($id eq '' || !$by_key{$key}) {
       my %copy = $report->%*;
       push @merged, \%copy;
-      $by_id{$id} = \%copy if $id ne '';
+      $by_key{$key} = \%copy if $id ne '';
       next;
     }
 
-    my $existing = $by_id{$id};
+    my $existing = $by_key{$key};
     _merge_report_list_field($existing, $report, $_) for qw(affected_versions cves references fixed_versions);
 
     foreach my $field (sort keys $report->%*) {
@@ -457,6 +458,16 @@ sub _merge_cpansa_advisories ($advisories) {
   }
 
   return @merged;
+}
+
+sub _cpansa_merge_key ($report) {
+  return join "\0", map { _stable_value(_normalized_merge_value($report->{$_})) }
+    qw(id distribution cves description reported severity darkpan);
+}
+
+sub _normalized_merge_value ($value) {
+  return [sort grep { defined && $_ ne '' } $value->@*] if ref($value) eq 'ARRAY';
+  return $value;
 }
 
 sub _merge_report_list_field ($existing, $incoming, $field) {

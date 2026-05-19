@@ -1,3 +1,9 @@
+cpansec-feed (0.2.4) unstable; urgency=medium
+
+  * Only merge repeated CPANSA rows when advisory metadata is compatible.
+
+ -- CPANSec Feed Maintainers <packages@example.invalid>  Tue, 19 May 2026 20:56:25 +0200
+
 cpansec-feed (0.2.3) unstable; urgency=medium
 
   * Merge repeated CPANSA advisory rows by affected version range.

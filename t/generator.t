@@ -172,6 +172,54 @@ is_deeply(
 );
 like($merged_rows->[0]{note}, qr/merged 2 CPANSA rows into 2 affected version ranges/, 'report row notes merged source rows');
 
+my $split_cache_dir = $tmpdir->child('split-metacpan-cache');
+$split_cache_dir->mkpath;
+$split_cache_dir->child(unpack('H*', 'Split-Dist') . '.json')->spew_raw(encode_json([
+  {
+    release => 'CPANSEC/Split-Dist-1.00',
+    version_numified => '1.00',
+  },
+  {
+    release => 'CPANSEC/Split-Dist-2.00',
+    version_numified => '2.00',
+  },
+]));
+
+my ($split_feed, $split_rows) = generate_feed(
+  cpansa_db => {
+    dists => {
+      'Split-Dist' => {
+        advisories => [
+          {
+            id => 'CPANSA-Split-Dist-2026-0001',
+            distribution => 'Split-Dist',
+            affected_versions => ['=1.00'],
+            cves => [],
+            references => ['https://example.test/one'],
+            reported => '2026-01-01',
+            description => 'first logical advisory',
+          },
+          {
+            id => 'CPANSA-Split-Dist-2026-0001',
+            distribution => 'Split-Dist',
+            affected_versions => ['=2.00'],
+            cves => [],
+            references => ['https://example.test/two'],
+            reported => '2026-01-01',
+            description => 'second logical advisory',
+          },
+        ],
+      },
+    },
+  },
+  cve_dir => $tmpdir,
+  metacpan_cache_dir => $split_cache_dir,
+  metacpan_cache_ttl => 0,
+);
+
+is(scalar $split_feed->{'Split-Dist'}->@*, 2, 'same CPANSA id rows with different descriptions stay separate');
+is(scalar(grep { ($_->{note} // '') =~ /merged/ } $split_rows->@*), 0, 'split same-id rows do not claim a merge');
+
 my ($authoritative_feed) = generate_feed(
   cpansa_db => {
     dists => {
