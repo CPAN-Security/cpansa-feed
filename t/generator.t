@@ -113,4 +113,100 @@ is_deeply($record->{affected_releases}, ['CPANSEC/Net-Statsd-Lite-0.8.0'], 'affe
 is($record->{cve_id}, 'CVE-2026-46719', 'cve_id key remains aligned');
 ok(!grep { /^ARRAY\(/ || /^HASH\(/ } keys $record->%*, 'record has no stringified reference keys');
 
+my $merge_cache_dir = $tmpdir->child('merge-metacpan-cache');
+$merge_cache_dir->mkpath;
+$merge_cache_dir->child(unpack('H*', 'DBD-SQLite') . '.json')->spew_raw(encode_json([
+  {
+    release => 'ISHIGAKI/DBD-SQLite-1.01',
+    version_numified => '1.01',
+  },
+  {
+    release => 'ISHIGAKI/DBD-SQLite-1.03',
+    version_numified => '1.03',
+  },
+]));
+
+my ($merged_feed, $merged_rows) = generate_feed(
+  cpansa_db => {
+    dists => {
+      'DBD-SQLite' => {
+        advisories => [
+          {
+            id => 'CPANSA-DBD-SQLite-2018-8740-sqlite',
+            distribution => 'DBD-SQLite',
+            affected_versions => ['>=1.00,<=1.02'],
+            cves => [],
+            references => ['https://example.test/sqlite'],
+            reported => '2018-03-17',
+            description => 'sqlite fixture',
+          },
+          {
+            id => 'CPANSA-DBD-SQLite-2018-8740-sqlite',
+            distribution => 'DBD-SQLite',
+            affected_versions => ['>=1.03,<=1.04'],
+            cves => [],
+            references => ['https://example.test/sqlite'],
+            reported => '2018-03-17',
+            description => 'sqlite fixture',
+          },
+        ],
+      },
+    },
+  },
+  cve_dir => $tmpdir,
+  metacpan_cache_dir => $merge_cache_dir,
+  metacpan_cache_ttl => 0,
+);
+
+my $merged_record = $merged_feed->{'DBD-SQLite'}[0];
+is(scalar $merged_feed->{'DBD-SQLite'}->@*, 1, 'same CPANSA id rows are merged into one record');
+is_deeply(
+  $merged_record->{affected_versions},
+  ['>=1.00,<=1.02', '>=1.03,<=1.04'],
+  'affected_versions are merged',
+);
+is_deeply(
+  $merged_record->{affected_releases},
+  ['ISHIGAKI/DBD-SQLite-1.01', 'ISHIGAKI/DBD-SQLite-1.03'],
+  'affected releases are resolved from merged ranges',
+);
+like($merged_rows->[0]{note}, qr/merged 2 CPANSA rows into 2 affected version ranges/, 'report row notes merged source rows');
+
+my ($authoritative_feed) = generate_feed(
+  cpansa_db => {
+    dists => {
+      'Net-Statsd-Lite' => {
+        advisories => [
+          {
+            id => 'CPANSA-Net-Statsd-Lite-2026-46719-vendored',
+            distribution => 'Net-Statsd-Lite',
+            affected_versions => ['>=100,<=200'],
+            cves => ['CVE-2026-46719'],
+            references => ['https://example.test/vendored'],
+            reported => '2026-05-16',
+            description => 'vendored fixture',
+          },
+          {
+            id => 'CPANSA-Net-Statsd-Lite-2026-46719-vendored',
+            distribution => 'Net-Statsd-Lite',
+            affected_versions => ['>=201,<=202'],
+            cves => ['CVE-2026-46719'],
+            references => ['https://example.test/vendored'],
+            reported => '2026-05-16',
+            description => 'vendored fixture',
+          },
+        ],
+      },
+    },
+  },
+  cve_dir => $cve_dir,
+  metacpan_cache_dir => $cache_dir,
+  metacpan_cache_ttl => 0,
+);
+
+my $authoritative_record = $authoritative_feed->{'Net-Statsd-Lite'}[0];
+is_deeply($authoritative_record->{affected_versions}, ['<0.9.0'], 'CPANSec CVE affected_versions stay authoritative');
+is_deeply($authoritative_record->{affected_releases}, ['CPANSEC/Net-Statsd-Lite-0.8.0'], 'CPANSec CVE affected_releases stay authoritative');
+is($authoritative_record->{cpansa_id}, 'CPANSA-Net-Statsd-Lite-2026-46719-vendored', 'CPANSA still enriches the CPANSec record with an advisory id');
+
 done_testing;

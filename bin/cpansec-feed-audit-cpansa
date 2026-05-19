@@ -1,0 +1,98 @@
+#!/usr/bin/env perl
+use 5.36.0;
+use warnings;
+
+use Getopt::Long qw(GetOptions);
+use JSON::MaybeXS qw(decode_json encode_json);
+use Path::Tiny;
+
+my %opt = (
+  cpansa_json => 'var/cpan-security-advisory.json',
+);
+
+GetOptions(
+  'cpansa-json=s' => \$opt{cpansa_json},
+  'format=s' => \$opt{format},
+) or die "invalid options\n";
+
+my $db = decode_json(path($opt{cpansa_json})->slurp_raw);
+die "CPANSA JSON is missing top-level dists\n" if ref($db) ne 'HASH' || ref($db->{dists}) ne 'HASH';
+
+my @rows;
+foreach my $dist (sort keys $db->{dists}->%*) {
+  my %by_id;
+  foreach my $report ($db->{dists}{$dist}{advisories}->@*) {
+    push $by_id{$report->{id} // '<missing>'}->@*, $report;
+  }
+
+  foreach my $id (sort keys %by_id) {
+    my $reports = $by_id{$id};
+    next if $reports->@* < 2;
+
+    my @differing_fields = _differing_fields($reports);
+    push @rows, {
+      distribution => $dist,
+      id => $id,
+      rows => scalar $reports->@*,
+      affected_versions => _merged_list($reports, 'affected_versions'),
+      cves => _merged_list($reports, 'cves'),
+      differing_fields => \@differing_fields,
+    };
+  }
+}
+
+if (($opt{format} // 'tsv') eq 'json') {
+  print encode_json(\@rows), "\n";
+  exit 0;
+}
+
+say join "\t", qw(distribution id rows affected_version_count cves differing_fields affected_versions);
+foreach my $row (@rows) {
+  say join "\t",
+    $row->{distribution},
+    $row->{id},
+    $row->{rows},
+    scalar($row->{affected_versions}->@*),
+    join(',', $row->{cves}->@*),
+    join(',', $row->{differing_fields}->@*),
+    join(' | ', $row->{affected_versions}->@*);
+}
+
+sub _differing_fields ($reports) {
+  my %fields = map { $_ => 1 } map { keys $_->%* } $reports->@*;
+  my @differing;
+
+  foreach my $field (sort keys %fields) {
+    next if $field eq 'affected_versions';
+    my %seen;
+    foreach my $report ($reports->@*) {
+      my $value = $report->{$field};
+      $seen{_stable_value($value)}++;
+    }
+    push @differing, $field if keys(%seen) > 1;
+  }
+
+  return @differing;
+}
+
+sub _merged_list ($reports, $field) {
+  my (%seen, @merged);
+  foreach my $report ($reports->@*) {
+    my $value = $report->{$field};
+    my @values = ref($value) eq 'ARRAY' ? $value->@*
+      : defined($value) && $value ne '' ? ($value)
+      : ();
+    foreach my $item (@values) {
+      next if !defined $item || $item eq '';
+      next if $seen{$item}++;
+      push @merged, $item;
+    }
+  }
+  return \@merged;
+}
+
+sub _stable_value ($value) {
+  return '<undef>' if !defined $value;
+  return encode_json($value) if ref($value);
+  return $value;
+}

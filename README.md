@@ -27,6 +27,12 @@ Generate the feed and validation report:
 ./podman_run.sh './generate.sh'
 ```
 
+Audit repeated CPANSA advisory IDs:
+
+```bash
+perl bin/cpansec-feed-audit-cpansa --cpansa-json var/cpan-security-advisory.json
+```
+
 Outputs in the repo:
 
 - `var/cpan-security-advisory.json`: downloaded CPANSA JSON
@@ -108,7 +114,7 @@ MetaCPAN cache entries older than 6 hours are treated as stale and refetched on 
 Package builds run:
 
 ```bash
-prove -l t/metacpan-cache.t t/version-range.t t/cpansa-json.t t/generator.t t/schema.t t/test-cve-compat.t
+prove -l t/metacpan-cache.t t/version-range.t t/cpansa-json.t t/generator.t t/schema.t t/cpansa-audit.t t/test-cve-compat.t
 ```
 
 `Test::CVE` is not packaged in Debian 13, so `t/test-cve-compat.t` currently skips in the Debian package build.

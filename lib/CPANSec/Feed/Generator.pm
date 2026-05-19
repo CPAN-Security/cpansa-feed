@@ -231,7 +231,7 @@ sub _build_feed ($db, $cve_path) {
           published => $report->{reported} // '',
         updated => '',
           title => '',
-          note => 'DarkPAN advisories are excluded',
+          note => _join_notes($report->{_merge_note}, 'DarkPAN advisories are excluded'),
         };
         next;
       }
@@ -249,7 +249,7 @@ sub _build_feed ($db, $cve_path) {
           published => $report->{reported} // '',
         updated => '',
           title => '',
-          note => 'CVE already covered by CPANSec authoritative record',
+          note => _join_notes($report->{_merge_note}, 'CVE already covered by CPANSec authoritative record'),
         };
         next;
       }
@@ -268,7 +268,7 @@ sub _build_feed ($db, $cve_path) {
           published => $report->{reported} // '',
         updated => '',
           title => '',
-          note => $report->{_skip_reason} // 'Sanitization failed',
+          note => _join_notes($report->{_merge_note}, $report->{_skip_reason} // 'Sanitization failed'),
         };
         next;
       }
@@ -289,7 +289,7 @@ sub _build_feed ($db, $cve_path) {
           published => $report->{reported} // '',
         updated => '',
           title => '',
-          note => $note,
+          note => _join_notes($report->{_merge_note}, $note),
         };
         $CPANSEC_SKIP_NOTES{$report->{cve_id}}{$dist} = $note if $report->{cve_id};
         warn "$report->{id} unable to resolve CVE payload for '$report->{cve_id}'. Skipping.";
@@ -309,7 +309,7 @@ sub _build_feed ($db, $cve_path) {
           published => $report->{reported} // '',
         updated => '',
           title => '',
-          note => 'Duplicate advisory for a CVE already emitted from cvelistV5',
+          note => _join_notes($report->{_merge_note}, 'Duplicate advisory for a CVE already emitted from cvelistV5'),
         };
         next;
       }
@@ -327,7 +327,7 @@ sub _build_feed ($db, $cve_path) {
           published => $report->{reported} // '',
           updated => '',
           title => '',
-          note => 'No usable affected versions in CPANSA advisory',
+          note => _join_notes($report->{_merge_note}, 'No usable affected versions in CPANSA advisory'),
         };
         next;
       }
@@ -346,7 +346,7 @@ sub _build_feed ($db, $cve_path) {
           published => $report->{reported} // '',
           updated => '',
           title => '',
-          note => $LAST_VERSION_RESOLUTION_ERROR // 'Failed to resolve version range against MetaCPAN releases',
+          note => _join_notes($report->{_merge_note}, $LAST_VERSION_RESOLUTION_ERROR // 'Failed to resolve version range against MetaCPAN releases'),
         };
         next;
       }
@@ -382,12 +382,12 @@ sub _build_feed ($db, $cve_path) {
         published => ($cve ? _published_from_cve($cve) : undef) // $report->{reported} // '',
         updated => ($cve ? _updated_from_cve($cve) : undef) // '',
         title => $record->{title} // '',
-        note => $is_cpansec
+        note => _join_notes($report->{_merge_note}, $is_cpansec
           ? 'CPANSec CVE was not emitted from cvelistV5; fallback reason: '
             . ($CPANSEC_SKIP_NOTES{$report->{cve_id}}{$dist}
               // $CPANSEC_SKIP_NOTES{$report->{cve_id}}{''}
               // 'unknown')
-          : 'Historical advisory sourced from CPANSA',
+          : 'Historical advisory sourced from CPANSA'),
       };
     }
   }
@@ -399,8 +399,7 @@ sub _index_cpansa ($db) {
   my (%by_cve, %by_dist);
 
   foreach my $dist (sort keys $db->{dists}->%*) {
-    my %seen_id;
-    my @advisories = grep { !$seen_id{$_->{id} // ''}++ } $db->{dists}{$dist}{advisories}->@*;
+    my @advisories = _merge_cpansa_advisories($db->{dists}{$dist}{advisories});
     $by_dist{$dist} = \@advisories;
 
     foreach my $report (@advisories) {
@@ -411,6 +410,68 @@ sub _index_cpansa ($db) {
   }
 
   return (\%by_cve, \%by_dist);
+}
+
+sub _merge_cpansa_advisories ($advisories) {
+  return () if ref($advisories) ne 'ARRAY';
+
+  my @merged;
+  my %by_id;
+  foreach my $report ($advisories->@*) {
+    my $id = $report->{id} // '';
+    if ($id eq '' || !$by_id{$id}) {
+      my %copy = $report->%*;
+      push @merged, \%copy;
+      $by_id{$id} = \%copy if $id ne '';
+      next;
+    }
+
+    my $existing = $by_id{$id};
+    _merge_report_list_field($existing, $report, $_) for qw(affected_versions cves references fixed_versions);
+
+    foreach my $field (sort keys $report->%*) {
+      next if $field =~ /\A(?:affected_versions|cves|references|fixed_versions)\z/;
+      next if !defined $report->{$field};
+      if (!defined $existing->{$field}) {
+        $existing->{$field} = $report->{$field};
+        next;
+      }
+      if (_stable_value($existing->{$field}) ne _stable_value($report->{$field})) {
+        $existing->{_merge_conflicts}{$field} = 1;
+      }
+    }
+
+    $existing->{_merged_report_count}++;
+  }
+
+  foreach my $report (@merged) {
+    next if !$report->{_merged_report_count};
+    my $count = $report->{_merged_report_count} + 1;
+    my $version_count = scalar _normalize_list($report->{affected_versions})->@*;
+    my $note = "merged $count CPANSA rows";
+    $note .= " into $version_count affected version ranges" if $version_count;
+    if ($report->{_merge_conflicts} && keys $report->{_merge_conflicts}->%*) {
+      $note .= '; conflicting fields: ' . join(', ', sort keys $report->{_merge_conflicts}->%*);
+    }
+    $report->{_merge_note} = $note;
+  }
+
+  return @merged;
+}
+
+sub _merge_report_list_field ($existing, $incoming, $field) {
+  my $merged = _merge_lists($existing->{$field}, $incoming->{$field});
+  $existing->{$field} = $merged if $merged->@*;
+}
+
+sub _stable_value ($value) {
+  return '<undef>' if !defined $value;
+  return encode_json($value) if ref($value);
+  return $value;
+}
+
+sub _join_notes (@notes) {
+  return join '; ', grep { defined && $_ ne '' } @notes;
 }
 
 sub _load_cpansec_cves ($cve_path) {
@@ -1001,6 +1062,7 @@ sub _write_html_report ($path, $rows, $metadata = undef) {
     .table-wrap { overflow-x: auto; }
     td.id { font-family: ui-monospace, monospace; font-size: 0.85em; white-space: nowrap; }
     td.date { white-space: nowrap; font-size: 0.85em; }
+    td.note { max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .rel { color: #8b7355; font-size: 0.85em; }
     a { color: #4a6fa5; text-decoration: none; }
     a:hover { text-decoration: underline; }
@@ -1120,7 +1182,8 @@ sub _report_table_row ($row) {
 
   my $cve_id = $row->{cve_id} // '';
 
-  my $note = $row->{note} // '';
+  my $raw_note = $row->{note} // '';
+  my $note = $raw_note;
   if ($row->{cpansa_id} && $row->{cpansa_id} ne '') {
     my $cpansa_link = _cpansa_link($row->{cpansa_id}, $row->{distribution});
     $note = $cpansa_link . ($note ne '' ? '; ' . xml_escape($note) : '');
@@ -1143,7 +1206,7 @@ sub _report_table_row ($row) {
     . '<td class="title" title="' . xml_escape($title) . '">' . xml_escape($title) . '</td>'
     . '<td>' . xml_escape(_display_status($row)) . '</td>'
     . '<td>' . xml_escape($row->{cna} // '') . '</td>'
-    . '<td>' . $note . '</td>'
+    . '<td class="note" title="' . xml_escape($raw_note) . '">' . $note . '</td>'
     . '</tr>';
 }
 

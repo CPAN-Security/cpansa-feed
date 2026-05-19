@@ -21,7 +21,7 @@ image:
 	podman build -t $(IMAGE) .
 
 test:
-	./podman_run.sh 'prove -l t/metacpan-cache.t t/version-range.t t/cpansa-json.t t/generator.t t/schema.t t/test-cve-compat.t'
+	./podman_run.sh 'prove -l t/metacpan-cache.t t/version-range.t t/cpansa-json.t t/generator.t t/schema.t t/cpansa-audit.t t/test-cve-compat.t'
 
 generate:
 	./podman_run.sh './generate.sh'

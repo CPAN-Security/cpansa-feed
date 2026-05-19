@@ -87,7 +87,7 @@ make deb
 Run tests directly when Perl dependencies are already available locally:
 
 ```sh
-prove -l t/metacpan-cache.t t/version-range.t t/cpansa-json.t t/generator.t t/schema.t t/test-cve-compat.t
+prove -l t/metacpan-cache.t t/version-range.t t/cpansa-json.t t/generator.t t/schema.t t/cpansa-audit.t t/test-cve-compat.t
 ```
 
 `t/test-cve-compat.t` skips when `Test::CVE` is not installed. Debian package builds use the same test list through `debian/rules`.

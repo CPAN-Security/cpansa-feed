@@ -1,4 +1,5 @@
 bin/cpansec-feed-generate usr/bin/
+bin/cpansec-feed-audit-cpansa usr/bin/
 bin/cpansec-feed-run usr/bin/
 bin/cpansec-feed-update-data usr/bin/
 lib/CPANSec/Feed/*.pm usr/share/perl5/CPANSec/Feed/
